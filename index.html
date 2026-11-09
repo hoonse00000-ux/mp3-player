@@ -349,7 +349,7 @@ async function addFiles(fileList) {
     const s = { id: uid(), name: cleanName(f.name.replace(/\.[^.]+$/, '')), file: f.name, blob, size: f.size, added: Date.now() };
     await enrich(s, true);
     try { await put('songs', s); } catch (err) { db = null; await put('songs', s); }
-    songs.push(s); n++;
+    songs.push(s); n++; cloudQueueUpload(s);
   }
   toast(`${n}곡을 저장했어요`);
   render();
@@ -474,14 +474,14 @@ async function enrich(s, isNew) {
   s.v2 = true; s.v3 = true;
 }
 async function upgradeOldSongs() {
-  const old = songs.filter(s => !s.v2);
+  const old = songs.filter(s => !s.v2 && s.blob);
   for (const s of old) {
-    try { await enrich(s, false); await put('songs', s); } catch {}
+    try { await enrich(s, false); await saveSong(s, true); } catch {}
     render(); if (s.id === curId) updateNow();
   }
   if (old.length) toast(`${old.length}곡의 정보를 정리했어요`);
-  for (const s of songs.filter(x => !x.v3)) {   // 이미 넣은 곡의 가사 읽기
-    try { const t = await readTags(s.blob); if (t.lyrics && !s.lyrics) s.lyrics = t.lyrics; s.v3 = true; await put('songs', s); } catch {}
+  for (const s of songs.filter(x => !x.v3 && x.blob)) {   // 이미 넣은 곡의 가사 읽기
+    try { const t = await readTags(s.blob); if (t.lyrics && !s.lyrics) s.lyrics = t.lyrics; s.v3 = true; await saveSong(s, true); } catch {}
   }
 }
 
@@ -565,7 +565,7 @@ async function convertVideos(files) {
       const s = { id: uid(), name: cleanName(base), file: base + '.mp3', blob: mp3, size: mp3.size, added: Date.now(), dur: buf.duration, v2: true, v3: true, fromVideo: true };
       if (art) s.art = art;
       try { await put('songs', s); } catch (err) { db = null; await put('songs', s); }
-      songs.push(s); ok++; lastId = s.id;
+      songs.push(s); ok++; cloudQueueUpload(s); lastId = s.id;
       render();
     } catch (e) {
       const why = e.message === 'big' ? '영상이 너무 커요 (1.5GB 이하만 가능)' : e.message === 'decode' ? '소리가 없거나 지원하지 않는 형식이에요' : e.message === 'lame' ? '변환 도구를 불러오지 못했어요 (인터넷 확인)' : '메모리가 부족하거나 처리 중 오류가 났어요';
@@ -585,6 +585,7 @@ async function convertVideos(files) {
   if (ok) toast(`${ok}곡을 추가했어요`);
 }
 function saveMp3(s) {
+  if (!s.blob) return toast('아직 클라우드에서 받는 중이에요');
   try {
     const a = document.createElement('a'), u = URL.createObjectURL(s.blob);
     a.href = u; a.download = (s.name || 'music').replace(/[\\/:*?"<>|]/g, '_') + '.mp3';
@@ -611,7 +612,8 @@ function songRow(s, i, ctx) {
     <button class="ic" data-menu="${s.id}" aria-label="메뉴">⋯</button>
   </div>`;
 }
-const subLine = s => [s.artist, s.dur ? fmt(s.dur) : fmtSize(s.size)].filter(Boolean).join(' · ');
+const CLOUD_TXT = { up: '올리는 중', down: '받는 중', remote: '클라우드', err: '동기화 실패' };
+const subLine = s => [s.artist, s.dur ? fmt(s.dur) : fmtSize(s.size), CLOUD_TXT[s.cloud]].filter(Boolean).join(' · ');
 const artUrls = new Map();
 function artUrl(s) {
   if (!s || !s.art) return '';
@@ -688,8 +690,9 @@ function render() {
   } else {
     const p = plById(openPl);
     if (!p) { openPl = null; return render(); }
-    p.songIds = p.songIds.filter(id => songById(id));
-    const list = p.songIds.map(songById);
+    const ids = p.songIds.filter(id => songById(id));   // 아직 동기화 안 된 곡은 잠시 숨김 (목록은 보존)
+    if (!cloud()) p.songIds = ids;
+    const list = ids.map(songById);
     m.innerHTML = `<div class="dethead"><button class="ic" id="back" aria-label="뒤로">‹</button><h2>${esc(p.name)}</h2><button class="ic" id="plMenu" aria-label="메뉴">⋯</button></div>
       <div class="toolbar">
         ${list.length ? `<button class="btn primary" id="plPlay">▶ 재생</button><button class="btn" id="plShuf">${SHUF} 셔플</button>` : ''}
@@ -700,16 +703,17 @@ function render() {
     $('#plAdd').onclick = () => pickSongsFor(p);
     $('#plMenu').onclick = () => plMenu(p);
     if (list.length) {
-      $('#plPlay').onclick = () => { setShuffle(false); playList(p.songIds, 0, p.id); };
-      $('#plShuf').onclick = () => { setShuffle(true); playList(p.songIds, Math.floor(Math.random() * list.length), p.id); };
+      $('#plPlay').onclick = () => { setShuffle(false); playList(ids, 0, p.id); };
+      $('#plShuf').onclick = () => { setShuffle(true); playList(ids, Math.floor(Math.random() * list.length), p.id); };
     }
     m.querySelectorAll('[data-play]').forEach(r => r.onclick = e => {
       if (e.target.closest('button')) return;
-      playList(p.songIds, +r.dataset.play, p.id);
+      playList(ids, +r.dataset.play, p.id);
     });
     if ($('#songList')) enableDrag($('#songList'), async (from, to) => {
-      const [x] = p.songIds.splice(from, 1); p.songIds.splice(to, 0, x);
-      await put('playlists', p);
+      const arr = ids.slice(), [x] = arr.splice(from, 1); arr.splice(to, 0, x);
+      p.songIds = arr.concat(p.songIds.filter(id => !arr.includes(id)));
+      await savePl(p);
       if (queueSrc === p.id) syncQueue(p.songIds);
       render();
     });
@@ -734,16 +738,16 @@ function songMenu(s) {
         await renameSong(s);
       } else if (a === 'addpl') addToPlaylists(s);
       else if (a === 'rmpl') {
-        inPl.songIds = inPl.songIds.filter(id => id !== s.id); await put('playlists', inPl);
+        inPl.songIds = inPl.songIds.filter(id => id !== s.id); await savePl(inPl);
         if (queueSrc === inPl.id) syncQueue(inPl.songIds);
         render(); toast('플레이리스트에서 뺐어요');
       } else if (a === 'save') {
         saveMp3(s);
       } else if (a === 'del') {
         if (!await confirmBox(`'${s.name}'을(를) 삭제할까요? 모든 플레이리스트에서도 빠져요.`)) return;
-        await del('songs', s.id);
+        await del('songs', s.id); cloudDeleteSong(s);
         songs = songs.filter(x => x !== s);
-        for (const p of playlists) if (p.songIds.includes(s.id)) { p.songIds = p.songIds.filter(id => id !== s.id); await put('playlists', p); }
+        for (const p of playlists) if (p.songIds.includes(s.id)) { p.songIds = p.songIds.filter(id => id !== s.id); await savePl(p); }
         if (curId === s.id) { audio.pause(); audio.removeAttribute('src'); curId = null; updateNow(); }
         if (queueSrc) syncQueue(queueSrc === 'lib' ? songs.map(x => x.id) : (plById(queueSrc)?.songIds || []));
         render(); toast('삭제했어요');
@@ -755,7 +759,7 @@ function addToPlaylists(s) {
   if (!playlists.length) {
     return askText('새 플레이리스트 이름', '내 플레이리스트', '만들고 담기').then(async v => {
       if (!v) return; const p = { id: uid(), name: v, songIds: [s.id], created: Date.now() };
-      await put('playlists', p); playlists.push(p); render(); toast(`'${v}'에 담았어요`);
+      await savePl(p); playlists.push(p); render(); toast(`'${v}'에 담았어요`);
     });
   }
   openSheet(`<p class="sheet-title">플레이리스트에 담기</p>` +
@@ -765,7 +769,7 @@ function addToPlaylists(s) {
       closeSheet(); await new Promise(r => setTimeout(r, 230));
       const v = await askText('새 플레이리스트 이름', '');
       if (!v) return; const p = { id: uid(), name: v, songIds: [s.id], created: Date.now() };
-      await put('playlists', p); playlists.push(p); render(); toast(`'${v}'에 담았어요`);
+      await savePl(p); playlists.push(p); render(); toast(`'${v}'에 담았어요`);
     };
     b.querySelector('#ok').onclick = async () => {
       for (const c of b.querySelectorAll('input')) {
@@ -773,7 +777,7 @@ function addToPlaylists(s) {
         if (c.checked && !has) p.songIds.push(s.id);
         else if (!c.checked && has) p.songIds = p.songIds.filter(id => id !== s.id);
         else continue;
-        await put('playlists', p);
+        await savePl(p);
         if (queueSrc === p.id) syncQueue(p.songIds);
       }
       closeSheet(); render(); toast('저장했어요');
@@ -783,7 +787,7 @@ function addToPlaylists(s) {
 
 async function renameSong(s) {
   const v = await askText('곡 이름 바꾸기', s.name);
-  if (v) { s.name = v; s.renamed = true; await put('songs', s); render(); updateNow(); toast('이름을 바꿨어요'); }
+  if (v) { s.name = v; s.renamed = true; await saveSong(s); render(); updateNow(); toast('이름을 바꿨어요'); }
   return v;
 }
 
@@ -874,7 +878,7 @@ function lyricsEditor(s) {
     b.querySelector('#lyOk').onclick = async () => {
       const v = ta.value.replace(/\r\n?/g, '\n').trim();
       if (v) s.lyrics = v; else delete s.lyrics;
-      s.v3 = true; await put('songs', s);
+      s.v3 = true; await saveSong(s);
       toast(v ? '가사를 저장했어요' : '가사를 지웠어요');
       infoSheet('lyrics');
     };
@@ -888,7 +892,7 @@ async function newPlaylist() {
   const v = await askText('새 플레이리스트 이름', '', '만들기');
   if (!v) return;
   const p = { id: uid(), name: v, songIds: [], created: Date.now() };
-  await put('playlists', p); playlists.push(p);
+  await savePl(p); playlists.push(p);
   openPl = p.id; render();
   if (songs.length) setTimeout(() => pickSongsFor(p), 150);
 }
@@ -902,7 +906,7 @@ function pickSongsFor(p) {
       const checked = new Set([...b.querySelectorAll('input:checked')].map(c => c.value));
       p.songIds = p.songIds.filter(id => checked.has(id));
       for (const s of songs) if (checked.has(s.id) && !p.songIds.includes(s.id)) p.songIds.push(s.id);
-      await put('playlists', p);
+      await savePl(p);
       if (queueSrc === p.id) syncQueue(p.songIds);
       closeSheet(); render();
     };
@@ -916,10 +920,10 @@ function plMenu(p) {
       closeSheet(); await new Promise(r => setTimeout(r, 230));
       if (x.dataset.a === 'rename') {
         const v = await askText('플레이리스트 이름 바꾸기', p.name);
-        if (v) { p.name = v; await put('playlists', p); render(); updateNow(); }
+        if (v) { p.name = v; await savePl(p); render(); updateNow(); }
       } else {
         if (!await confirmBox(`'${p.name}' 플레이리스트를 삭제할까요? (곡 파일은 남아 있어요)`)) return;
-        await del('playlists', p.id); playlists = playlists.filter(x => x !== p);
+        await del('playlists', p.id); cloudDeletePl(p); playlists = playlists.filter(x => x !== p);
         if (queueSrc === p.id) queueSrc = null;
         openPl = null; render(); toast('삭제했어요');
       }
@@ -948,6 +952,11 @@ function syncQueue(ids) { // 큐 원본이 바뀌었을 때 현재 곡 위치 �
 async function loadAndPlay() {
   const s = songById(queue[order[pos]]);
   if (!s) return;
+  if (!s.blob) {
+    toast('클라우드에서 곡을 받는 중이에요…');
+    try { await downloadSong(s); } catch { toast('곡을 받지 못했어요. 인터넷 연결을 확인해 주세요'); return; }
+    if (queue[order[pos]] !== s.id) return;
+  }
   if (curUrl) URL.revokeObjectURL(curUrl);
   curUrl = URL.createObjectURL(s.blob);
   curId = s.id; pendingTime = null;
@@ -1216,6 +1225,7 @@ let fbStatus = window.FB_STATUS || 'loading', user = null;
 addEventListener('fb-status', e => { fbStatus = e.detail; renderAccount(); });
 addEventListener('fb-user', e => {
   const was = user; user = e.detail; renderAccount();
+  if (user && (!was || was.uid !== user.uid)) startCloud(); else if (!user && was) stopCloud();
   if (user && !was && fbStatus === 'ready' && window.FB_SIGNED_IN_NOW) { window.FB_SIGNED_IN_NOW = false; toast(`${displayName(user)}님, 환영해요`); }
 });
 const displayName = u => u.displayName || (u.email || '').split('@')[0] || '사용자';
@@ -1254,7 +1264,7 @@ function profileSheet() {
   openSheet(`<p class="sheet-title">내 계정</p>
     <div class="profile"><div class="acct in">${esc(displayName(user).slice(0, 1).toUpperCase())}</div>
       <div class="info"><div class="name">${esc(displayName(user))}</div><div class="sub">${esc(user.email || '')}</div></div></div>
-    <p class="note">곡과 플레이리스트는 아직 이 기기에 저장돼요. 다음 단계에서 계정에 동기화할 수 있어요.</p>
+    <div class="note" id="syncInfo" style="font-size:14px;line-height:1.7">${syncText()}</div>
     <div class="sheet-btns"><button class="btn" id="cx">닫기</button><button class="btn" style="color:var(--danger)" id="out">로그아웃</button></div>`, b => {
     b.querySelector('#cx').onclick = closeSheet;
     b.querySelector('#out').onclick = async () => { try { await window.FB.signOut(); closeSheet(); toast('로그아웃했어요'); } catch (e) { toast(authMsg(e)); } };
@@ -1302,6 +1312,175 @@ function loginSheet(mode) {
   });
 }
 
+/* ---------- 클라우드 동기화 (Firestore + Storage) ---------- */
+let localReadyResolve; const localReady = new Promise(r => localReadyResolve = r);
+let cloudUnsubs = [], cloudErr = '', upQ = [], upBusy = false;
+const dlMap = new Map();
+const cloud = () => (user && window.FB && window.FB.cloud) ? window.FB.cloud : null;
+const mine = x => user && x.owner === user.uid;
+const songMeta = s => ({ name: s.name, artist: s.artist || '', album: s.album || '', lyrics: s.lyrics || '', dur: s.dur || 0, size: s.size || 0,
+  file: s.file || '', added: s.added || Date.now(), renamed: !!s.renamed, hasArt: !!s.art, updatedAt: s.updatedAt || Date.now() });
+const plMeta = p => ({ name: p.name, songIds: p.songIds, created: p.created || Date.now(), updatedAt: p.updatedAt || Date.now() });
+const CLOUD_ERR = {
+  'storage/unauthorized': '권한이 없어요 (Storage 규칙 확인)', 'permission-denied': '권한이 없어요 (Firestore 규칙 확인)',
+  'storage/quota-exceeded': '저장 공간이 꽉 찼어요', 'storage/retry-limit-exceeded': '인터넷이 불안정해요',
+  'storage/unknown': 'Storage가 준비되지 않았어요 (Blaze 요금제·Storage 시작 확인)', 'storage/bucket-not-found': 'Storage가 아직 만들어지지 않았어요'
+};
+const cloudMsg = e => CLOUD_ERR[e && e.code] || ((e && e.code) || '알 수 없는 오류');
+function setCloudErr(e) { cloudErr = cloudMsg(e); refreshSyncInfo(); }
+function syncText() {
+  if (!cloud()) return fbStatus === 'ready' ? '동기화 기능을 불러오지 못했어요.' : '';
+  const ownedCount = songs.filter(mine).length, up = songs.filter(x => x.cloud === 'up' || (mine(x) && x.cloud === 'pending')).length,
+    down = songs.filter(x => x.cloud === 'remote' || x.cloud === 'down').length;
+  return `계정에 <b>${ownedCount}곡</b>, 플레이리스트 <b>${playlists.filter(mine).length}개</b>가 저장돼 있어요.` +
+    (up ? `<br>올리는 중: ${up}곡` : '') + (down ? `<br>이 기기로 받는 중: ${down}곡` : '') +
+    (cloudErr ? `<br><span style="color:var(--danger)">동기화 오류: ${esc(cloudErr)}</span>` : (!up && !down ? '<br>다른 기기에서 같은 계정으로 로그인하면 똑같이 보여요.' : ''));
+}
+function refreshSyncInfo() { const el = $('#syncInfo'); if (el) el.innerHTML = syncText(); }
+let renderT = null;
+function softRender() { clearTimeout(renderT); renderT = setTimeout(() => { render(); refreshSyncInfo(); }, 150); }
+
+async function saveSong(s, quiet) {
+  if (!quiet) s.updatedAt = Date.now();
+  await put('songs', s);
+  const c = cloud();
+  if (c && mine(s) && s.cloud !== 'up' && s.cloud !== 'pending') c.setSong(user.uid, s.id, songMeta(s)).catch(setCloudErr);
+}
+async function savePl(p) {
+  p.updatedAt = Date.now();
+  if (user && !p.owner) p.owner = user.uid;
+  await put('playlists', p);
+  const c = cloud();
+  if (c && mine(p)) c.setPl(user.uid, p.id, plMeta(p)).catch(setCloudErr);
+}
+function cloudDeleteSong(s) {
+  const c = cloud(); if (!c || !mine(s)) return;
+  c.delSong(user.uid, s.id).catch(setCloudErr);
+  c.remove(`users/${user.uid}/songs/${s.id}.mp3`); c.remove(`users/${user.uid}/art/${s.id}.jpg`);
+}
+function cloudDeletePl(p) { const c = cloud(); if (c && mine(p)) c.delPl(user.uid, p.id).catch(setCloudErr); }
+
+// 올리기 (한 곡씩 차례로)
+function cloudQueueUpload(s) {
+  if (!cloud() || !s.blob) return;
+  if (s.owner && s.owner !== user.uid) return;       // 다른 계정의 곡은 올리지 않음
+  if (s.cloud === 'done' && mine(s)) return;
+  s.owner = user.uid; s.cloud = 'pending';
+  put('songs', s).catch(() => {});
+  if (!upQ.includes(s)) upQ.push(s);
+  pumpUploads();
+}
+async function pumpUploads() {
+  if (upBusy) return; upBusy = true;
+  while (upQ.length && cloud()) {
+    const s = upQ.shift();
+    if (!songById(s.id)) continue;
+    const c = cloud(), uid = user.uid;
+    try {
+      s.cloud = 'up'; softRender();
+      await c.upload(`users/${uid}/songs/${s.id}.mp3`, s.blob);
+      if (s.art) await c.upload(`users/${uid}/art/${s.id}.jpg`, s.art);
+      if (!songById(s.id)) { c.remove(`users/${uid}/songs/${s.id}.mp3`); c.remove(`users/${uid}/art/${s.id}.jpg`); continue; }
+      s.updatedAt = s.updatedAt || Date.now();
+      await c.setSong(uid, s.id, songMeta(s));
+      s.cloud = 'done'; cloudErr = '';
+    } catch (e) { s.cloud = 'err'; setCloudErr(e); }
+    await put('songs', s).catch(() => {});
+    softRender();
+  }
+  upBusy = false;
+}
+// 받기
+function downloadSong(s) {
+  if (s.blob) return Promise.resolve(s);
+  if (dlMap.has(s.id)) return dlMap.get(s.id);
+  const c = cloud(); if (!c) return Promise.reject(new Error('offline'));
+  const uid = user.uid;
+  const job = (async () => {
+    s.cloud = 'down'; softRender();
+    try {
+      const b = await c.download(`users/${uid}/songs/${s.id}.mp3`);
+      s.blob = b.type ? b : new Blob([b], { type: 'audio/mpeg' });
+      if (s.hasArt && !s.art) { try { s.art = await c.download(`users/${uid}/art/${s.id}.jpg`); } catch {} }
+      s.cloud = 'done'; s.v2 = true; s.v3 = true;
+      await put('songs', s); cloudErr = '';
+      return s;
+    } catch (e) { s.cloud = 'remote'; setCloudErr(e); throw e; }
+    finally { dlMap.delete(s.id); softRender(); if (s.id === curId) updateNow(); }
+  })();
+  dlMap.set(s.id, job);
+  return job;
+}
+async function pumpDownloads() {
+  for (const s of songs.filter(x => !x.blob && x.cloud === 'remote')) { if (!cloud()) break; try { await downloadSong(s); } catch {} }
+}
+let dlPumping = false;
+function startDownloads() { if (dlPumping) return; dlPumping = true; pumpDownloads().finally(() => { dlPumping = false; }); }
+
+async function onSongChanges(changes) {
+  const uid = user.uid; let added = false;
+  for (const ch of changes) {
+    const d = ch.data, local = songById(ch.id);
+    if (ch.type === 'removed') {
+      if (local && local.owner === uid) {
+        await del('songs', local.id).catch(() => {});
+        songs = songs.filter(x => x !== local);
+        if (curId === local.id) { audio.pause(); audio.removeAttribute('src'); curId = null; updateNow(); }
+      }
+      continue;
+    }
+    if (!local) {
+      const st = { id: ch.id, name: d.name, artist: d.artist || undefined, album: d.album || undefined, lyrics: d.lyrics || undefined, dur: d.dur, size: d.size,
+        file: d.file, added: d.added, renamed: d.renamed, hasArt: d.hasArt, updatedAt: d.updatedAt, owner: uid, cloud: 'remote', blob: null, v2: true, v3: true };
+      Object.keys(st).forEach(k => st[k] === undefined && delete st[k]);
+      songs.push(st); await put('songs', st).catch(() => {}); added = true;
+    } else if ((d.updatedAt || 0) > (local.updatedAt || 0)) {
+      for (const k of ['name', 'artist', 'album', 'lyrics']) { if (d[k]) local[k] = d[k]; else delete local[k]; }
+      local.renamed = d.renamed; local.updatedAt = d.updatedAt; local.hasArt = d.hasArt;
+      await put('songs', local).catch(() => {});
+      if (local.id === curId) updateNow();
+    }
+  }
+  songs.sort((a, b) => (a.added || 0) - (b.added || 0));
+  softRender();
+  if (added) startDownloads();
+  if (infoOpen && songById(infoSongId)) infoSheet();
+}
+async function onPlChanges(changes) {
+  const uid = user.uid;
+  for (const ch of changes) {
+    const d = ch.data, local = plById(ch.id);
+    if (ch.type === 'removed') {
+      if (local && local.owner === uid) { await del('playlists', local.id).catch(() => {}); playlists = playlists.filter(x => x !== local); if (openPl === local.id) openPl = null; }
+      continue;
+    }
+    if (!local) { const pl = { id: ch.id, name: d.name, songIds: d.songIds || [], created: d.created, updatedAt: d.updatedAt, owner: uid }; playlists.push(pl); await put('playlists', pl).catch(() => {}); }
+    else if ((d.updatedAt || 0) > (local.updatedAt || 0)) {
+      local.name = d.name; local.songIds = d.songIds || []; local.updatedAt = d.updatedAt;
+      await put('playlists', local).catch(() => {});
+      if (queueSrc === local.id) syncQueue(local.songIds);
+    }
+  }
+  playlists.sort((a, b) => (a.created || 0) - (b.created || 0));
+  softRender();
+}
+async function startCloud() {
+  await localReady;
+  stopCloud();
+  const c = cloud(); if (!c) return;
+  const uid = user.uid;
+  cloudUnsubs.push(c.watchSongs(uid, ch => onSongChanges(ch).catch(() => {}), setCloudErr));
+  cloudUnsubs.push(c.watchPls(uid, ch => onPlChanges(ch).catch(() => {}), setCloudErr));
+  // 이 기기에만 있던 곡·플레이리스트 올리기
+  const newOnes = songs.filter(x => x.blob && (!x.owner || (x.owner === uid && x.cloud !== 'done')));
+  newOnes.forEach(cloudQueueUpload);
+  for (const p of playlists.filter(x => !x.owner)) await savePl(p);
+  if (newOnes.length) toast(`이 기기의 ${newOnes.length}곡을 계정에 올리는 중이에요`);
+  startDownloads();
+}
+function stopCloud() { cloudUnsubs.forEach(u => { try { u(); } catch {} }); cloudUnsubs = []; upQ = []; }
+addEventListener('online', () => { if (!cloud()) return; songs.filter(x => mine(x) && x.blob && x.cloud !== 'done').forEach(cloudQueueUpload); startDownloads(); });
+
 /* ---------- 재생 기록 저장 / 복원 ---------- */
 let restoring = false, lastSave = 0, pendingTime = null;
 function snapshot() {
@@ -1342,8 +1521,7 @@ async function restoreState() {
       else { queue = st.queue.filter(id => songById(id)); buildOrder(Math.max(0, queue.indexOf(s.id))); }
       if (queue[order[pos]] !== s.id) { const ci = queue.indexOf(s.id); if (ci < 0) { queue.push(s.id); order.push(queue.length - 1); pos = order.length - 1; } else pos = order.indexOf(ci); }
       curId = s.id;
-      curUrl = URL.createObjectURL(s.blob);
-      audio.src = curUrl;
+      if (s.blob) { curUrl = URL.createObjectURL(s.blob); audio.src = curUrl; }
       const t = +st.time || 0; pendingTime = t;
       audio.addEventListener('loadedmetadata', () => {
         if (t > 0 && t < audio.duration - 1) audio.currentTime = t;
@@ -1381,6 +1559,7 @@ if ('serviceWorker' in navigator && location.protocol === 'https:') {
   } catch { db = null; songs = []; playlists = []; }
   $('#shuffleBtn').innerHTML = SHUF;
   await restoreState();
+  localReadyResolve();
   renderAccount();
   upgradeOldSongs();
   setPlayIcon(); updateModes(); render();
@@ -1416,6 +1595,23 @@ else {
       signOut: () => A.signOut(auth)
     };
     A.getRedirectResult(auth).catch(() => {});
+    try {
+      const F = await import(`https://www.gstatic.com/firebasejs/${V}/firebase-firestore.js`);
+      const S = await import(`https://www.gstatic.com/firebasejs/${V}/firebase-storage.js`);
+      const db = F.getFirestore(app), st = S.getStorage(app);
+      const changes = (snap, cb) => cb(snap.docChanges().map(c => ({ type: c.type, id: c.doc.id, data: c.doc.data() })));
+      window.FB.cloud = {
+        setSong: (uid, id, data) => F.setDoc(F.doc(db, 'users', uid, 'songs', id), data),
+        delSong: (uid, id) => F.deleteDoc(F.doc(db, 'users', uid, 'songs', id)),
+        setPl: (uid, id, data) => F.setDoc(F.doc(db, 'users', uid, 'playlists', id), data),
+        delPl: (uid, id) => F.deleteDoc(F.doc(db, 'users', uid, 'playlists', id)),
+        watchSongs: (uid, cb, err) => F.onSnapshot(F.collection(db, 'users', uid, 'songs'), s => changes(s, cb), err),
+        watchPls: (uid, cb, err) => F.onSnapshot(F.collection(db, 'users', uid, 'playlists'), s => changes(s, cb), err),
+        upload: (path, blob) => S.uploadBytes(S.ref(st, path), blob, { contentType: blob.type || 'application/octet-stream' }),
+        download: path => S.getBlob(S.ref(st, path)),
+        remove: path => S.deleteObject(S.ref(st, path)).catch(() => {})
+      };
+    } catch (e) { console.error('cloud', e); window.FB.cloud = null; }
     status('ready');
     A.onAuthStateChanged(auth, u => dispatchEvent(new CustomEvent('fb-user', { detail: u })));
   } catch (e) { console.error(e); status('error'); }
