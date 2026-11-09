@@ -823,6 +823,7 @@ async function renameSong(s) {
 
 /* ---------- 재생 중인 곡 정보 ---------- */
 // 시간 가사([00:12.34] 형식) 읽기
+const langLabel = s => s.lang && s.lang !== 'auto' ? LANGS[s.lang] : (s.lyrLang ? `${LANGS[s.lyrLang]} (자동)` : '자동');
 function parseLrc(t) {
   const out = [], re = /\[(\d{1,3}):(\d{1,2}(?:[.:]\d{1,3})?)\]/g;
   for (const raw of (t || '').split('\n')) {
@@ -831,7 +832,7 @@ function parseLrc(t) {
     if (times.length) { const text = raw.slice(last).trim(); times.forEach(tm => out.push({ t: tm, text })); }
   }
   out.sort((a, b) => a.t - b.t);
-  return out.length >= 3 ? out : null;
+  return out.length ? out : null;
 }
 function infoSheet(tabArg) {
   const s = songById(curId);
@@ -845,17 +846,21 @@ function infoSheet(tabArg) {
   if (infoTab === 'lyrics') {
     const lrc = s.lyrics ? parseLrc(s.lyrics) : null;
     const working = aiCur && aiCur.id === s.id;
-    if (!s.lyrics && working) body = `<div class="nolyr" style="padding:30px 0 10px">AI가 노래를 듣고 가사를 받아쓰고 있어요</div>
+    if (!s.lyrics && working && !aiCur.msg.startsWith('인터넷')) body = `<div class="nolyr" style="padding:30px 0 10px">AI가 노래를 듣고 가사를 받아쓰고 있어요</div>
       <div class="prog"><i id="lyrProgBar" style="width:${Math.round(aiCur.p * 100)}%"></i></div><div class="vstat" id="lyrProgTxt" style="text-align:center">${esc(aiCur.msg)}</div>
       <p class="note" style="text-align:center;margin-top:8px">다 되면 여기에 자동으로 나와요. 앱을 열어 두세요.</p>`;
+    else if (!s.lyrics && working) body = `<div class="nolyr">${esc(aiCur.msg)}</div>`;
     else if (!s.lyrics && s.lyrAuto === 'pending') body = `<div class="nolyr">가사 받아쓰기를 기다리는 중이에요<br><span style="font-size:13px">앞의 곡이 끝나면 자동으로 시작해요</span></div>`;
-    else if (!s.lyrics && s.lyrAuto === 'nomem') body = `<div class="nolyr">가사가 없습니다<br><span style="font-size:13px">이 기기는 메모리가 부족해서 AI 자동 받아쓰기를 할 수 없어요</span></div><div class="sheet-btns"><button class="btn primary" id="lEdit">${I_EDIT} 가사 쓰기</button></div>`;
-    else if (!s.lyrics) body = `<div class="nolyr">가사가 없습니다</div><div class="sheet-btns"><button class="btn primary" id="lEdit">${I_EDIT} 가사 쓰기</button></div>`;
-    else body = `<div class="lyrics" id="lyrBox">${lrc ? lrc.map((l, i) => `<div class="lline" data-i="${i}">${esc(l.text) || '♪'}</div>`).join('') : esc(s.lyrics)}</div>
-      ${s.lyrAuto === 'done' ? '<p class="note" style="text-align:center;margin:4px 0 0">AI가 받아쓴 가사예요 · 틀린 곳은 가사 수정으로 고칠 수 있어요</p>' : ''}
-      <div class="sheet-btns"><button class="btn" id="lEdit">${I_EDIT} 가사 수정</button></div>`;
+    else if (!s.lyrics && s.lyrAuto === 'nomem') body = `<div class="nolyr">가사가 없습니다<br><span style="font-size:13px">인터넷 가사 모음에 없고, 이 기기는 메모리가 부족해 AI 받아쓰기를 할 수 없어요</span></div><div class="sheet-btns"><button class="btn" id="lWeb">인터넷에서 다시 찾기</button><button class="btn primary" id="lEdit">${I_EDIT} 가사 쓰기</button></div>`;
+    else if (!s.lyrics) body = `<div class="nolyr">가사가 없습니다${s.lyrAuto === 'none' || s.lyrAuto === 'error' ? '<br><span style="font-size:13px">AI가 가사를 알아듣지 못했어요. 언어를 골라 다시 해 볼 수 있어요</span>' : ''}</div><div class="sheet-btns">${s.lyrAuto === 'none' || s.lyrAuto === 'error' ? `<button class="btn" id="lWeb">인터넷에서 찾기</button><button class="btn" id="lLang">언어: ${langLabel(s)}</button>` : ''}<button class="btn primary" id="lEdit">${I_EDIT} 가사 쓰기</button></div>`;
+    else body = `<div class="lyrics" id="lyrBox">${lrc ? lrc.map((l, i) => `<div class="lline" data-i="${i}">${esc(l.text) || '♪'}</div>`).join('') : esc(s.lyrics.replace(/^\[[a-z]+:[^\]]*\]\s*$/gim, '').replace(/\[\d{1,3}:\d{1,2}(?:[.:]\d{1,3})?\]/g, '').trim())}</div>
+      ${s.lyrAuto === 'done' ? '<p class="note" style="text-align:center;margin:4px 0 0">AI가 받아쓴 가사예요 · 정확하지 않으면 인터넷에서 찾기나 언어 바꾸기를 해 보세요</p>' : ''}
+      ${s.lyrAuto === 'web' ? `<p class="note" style="text-align:center;margin:4px 0 0">인터넷 가사 모음(LRCLIB)에서 찾은 가사예요${s.lyrSrc ? ' · ' + esc(s.lyrSrc) : ''}</p>` : ''}
+      <div class="sheet-btns">${s.lyrAuto === 'done' || s.lyrAuto === 'edited' ? `<button class="btn" id="lWeb">인터넷에서 찾기</button><button class="btn" id="lLang">언어: ${langLabel(s)}</button>` : ''}${s.lyrAuto === 'web' ? '<button class="btn" id="lLang">AI로 받아쓰기</button>' : ''}<button class="btn" id="lEdit">${I_EDIT} 가사 수정</button></div>`;
     mount = b => {
       const le = b.querySelector('#lEdit'); if (le) le.onclick = () => lyricsEditor(s);
+      const ll = b.querySelector('#lLang'); if (ll) ll.onclick = () => langSheet(s);
+      const lw = b.querySelector('#lWeb'); if (lw) lw.onclick = () => findWebNow(s);
       if (lrc) {
         const els = [...b.querySelectorAll('.lline')];
         els.forEach(el => el.onclick = () => { audio.currentTime = lrc[+el.dataset.i].t; if (audio.paused) audio.play().catch(() => {}); });
@@ -1129,9 +1134,61 @@ if (LS.get('aiRunning', 0)) {            // 지난번 받아쓰기 도중 앱이
 }
 const aiDisabled = () => aiLevel >= AI_LEVELS.length;
 let aiQ = [], aiBusy = false, aiWorker = null, aiCur = null, aiNetWarned = false, aiFirstWarned = LS.get('aiModelReady', false);
+const LANGS = { auto: '자동', korean: '한국어', japanese: '일본어', english: '영어', chinese: '중국어' };
+// 제목·가수 글자로 언어 추측 (소리로 알아내지 못했을 때 사용)
+function guessLang(s) {
+  const t = [s.name, s.artist, s.album, s.file].join(' ');
+  if (/[\u3040-\u30ff]/.test(t)) return 'japanese';
+  if (/[\uac00-\ud7a3]/.test(t)) return 'korean';
+  if (/[\u4e00-\u9fff]/.test(t)) return 'chinese';
+  return null;
+}
+// 공개 가사 모음 LRCLIB(lrclib.net)에서 제목·가수·길이로 찾기
+async function webLyrics(s) {
+  let title = (s.name || '').replace(/[\[(（【][^\])）】]*[\])）】]/g, ' ')
+    .replace(/\b(official|music|video|audio|lyrics?|lyric video|mv|m\/v|hd|4k|live|가사|뮤직비디오)\b/gi, ' ').replace(/\s{2,}/g, ' ').trim();
+  let artist = (s.artist || '').trim();
+  if (!artist && / [-–] /.test(title)) { const p = title.split(/ [-–] /); artist = p[0].trim(); title = p.slice(1).join(' ').trim(); }
+  if (!title) return null;
+  const dur = s.dur || 0, enc = encodeURIComponent;
+  const tries = artist ? [`track_name=${enc(title)}&artist_name=${enc(artist)}`, `q=${enc(artist + ' ' + title)}`] : [`q=${enc(title)}`];
+  for (const q of tries) {
+    const r = await fetch('https://lrclib.net/api/search?' + q);
+    if (!r.ok) continue;
+    const list = await r.json();
+    const ok = list.filter(x => !x.instrumental && (x.syncedLyrics || x.plainLyrics) && (!dur || Math.abs((x.duration || 0) - dur) <= (artist ? 6 : 3)));
+    ok.sort((a, b) => (!!b.syncedLyrics - !!a.syncedLyrics) || Math.abs((a.duration || 0) - dur) - Math.abs((b.duration || 0) - dur));
+    if (ok[0]) return { text: (ok[0].syncedLyrics || ok[0].plainLyrics).replace(/\r\n?/g, '\n').trim(), src: `${ok[0].artistName} - ${ok[0].trackName}` };
+  }
+  return null;
+}
+async function findWebNow(s) {
+  if (!navigator.onLine) return toast('인터넷 연결을 확인해 주세요');
+  toast('인터넷에서 가사를 찾는 중이에요…');
+  const w = await webLyrics(s).catch(() => undefined);
+  if (w === undefined) return toast('가사 모음에 연결하지 못했어요');
+  if (!w) return toast('인터넷에서 이 곡의 가사를 찾지 못했어요. 제목·가수가 정확하면 더 잘 찾아요');
+  s.lyrics = w.text; s.lyrAuto = 'web'; s.lyrSrc = w.src; s.webTried = true;
+  await saveSong(s, true); toast('가사를 찾았어요');
+  if (infoOpen) infoSheet('lyrics');
+}
+function retranscribe(s, lang) {
+  s.lang = lang; delete s.lyrics; delete s.lyrLang; s.lyrAuto = 'pending';
+  put('songs', s).catch(() => {});
+  if (aiCur && aiCur.id === s.id) return;
+  queueLyrics(s);
+  toast(`${LANGS[lang]}${lang === 'auto' ? ' 감지' : ''}로 다시 받아써요`);
+}
+function langSheet(s) {
+  const cur = s.lang || 'auto';
+  openSheet(`<p class="sheet-title">노래 언어</p>
+    <p class="note" style="font-size:14px">언어를 고르면 그 언어로 가사를 다시 받아써요.${s.lyrAuto === 'edited' ? ' 직접 고친 가사는 지워져요.' : ''}</p>
+    ${Object.entries(LANGS).map(([k, l]) => `<button class="act-item" data-l="${k}">${l}${k === 'auto' ? ' (소리로 알아내기)' : ''}${k === cur ? ' <span style="color:var(--accent);margin-left:auto">현재</span>' : ''}</button>`).join('')}`, b => {
+    b.querySelectorAll('[data-l]').forEach(x => x.onclick = () => { retranscribe(s, x.dataset.l); infoSheet('lyrics'); });
+  });
+}
 function queueLyrics(s) {
   if (!s || s.lyrics || !s.blob) return;
-  if (aiDisabled()) { if (s.lyrAuto !== 'nomem') { s.lyrAuto = 'nomem'; put('songs', s).catch(() => {}); } return; }
   s.lyrAuto = 'pending'; put('songs', s).catch(() => {});
   if (!aiQ.includes(s.id)) aiQ.push(s.id);
   pumpLyrics();
@@ -1141,6 +1198,17 @@ async function pumpLyrics() {
   while (aiQ.length) {
     const s = songById(aiQ.shift());
     if (!s || s.lyrics || !s.blob) continue;
+    // 1) 인터넷 가사 모음에서 정확한 가사 찾기 (언어를 직접 고른 경우엔 AI로 바로)
+    if (!s.webTried && (!s.lang || s.lang === 'auto') && navigator.onLine) {
+      aiCur = { id: s.id, p: 0, msg: '인터넷에서 가사 찾는 중…' }; softRender();
+      const w = await webLyrics(s).catch(() => undefined);
+      aiCur = null;
+      if (w !== undefined) s.webTried = true;
+      if (w) { s.lyrics = w.text; s.lyrAuto = 'web'; s.lyrSrc = w.src; await saveSong(s, true); toast(`'${s.name}' 가사를 찾았어요`); softRender(); if (infoOpen && infoSongId === s.id) infoSheet(); continue; }
+      await put('songs', s).catch(() => {});
+    }
+    // 2) 없으면 AI가 듣고 받아쓰기
+    if (aiDisabled()) { s.lyrAuto = 'nomem'; await put('songs', s).catch(() => {}); softRender(); continue; }
     const ok = await transcribe(s);
     if (ok === 'net') { aiQ = []; break; }           // 인터넷이 없으면 다음에 앱을 열 때 이어서
   }
@@ -1161,8 +1229,11 @@ async function transcribe(s) {
   try {
     const OAC = window.OfflineAudioContext || window.webkitOfflineAudioContext;
     const buf = await new Promise(async (res, rej) => { const ab = await s.blob.arrayBuffer(); const c = new OAC(1, 1, 16000); const pr = c.decodeAudioData(ab, res, rej); if (pr && pr.then) pr.then(res, rej); });
-    const n = buf.length, mono = new Float32Array(n);
-    for (let c = 0; c < buf.numberOfChannels; c++) { const d = buf.getChannelData(c); for (let i = 0; i < n; i++) mono[i] += d[i] / buf.numberOfChannels; }
+    // 저음 반주(베이스·드럼)를 줄여 목소리가 잘 들리게
+    const oc = new OAC(1, buf.length, 16000), src = oc.createBufferSource(); src.buffer = buf;
+    const hp = oc.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 110;
+    src.connect(hp); hp.connect(oc.destination); src.start();
+    const mono = (await oc.startRendering()).getChannelData(0);
     if (!aiFirstWarned) { aiFirstWarned = true; toast(`처음 한 번 가사 AI(${AI_LEVELS[aiLevel].size})를 내려받아요. 와이파이에서 기다려 주세요`); }
     if (!aiWorker) aiWorker = new Worker('lyrics-worker.js', { type: 'module' });
     const lines = await new Promise((res, rej) => {
@@ -1170,15 +1241,17 @@ async function transcribe(s) {
         const d = e.data;
         if (d.type === 'load') aiUpd(d.p * 0.3, d.p < 1 ? `가사 AI 내려받는 중… ${Math.round(d.p * 100)}%` : '가사 AI 준비 중…');
         else if (d.type === 'asr') { LS.set('aiModelReady', true); aiUpd(0.3 + d.p * 0.7, `가사 받아쓰는 중… ${Math.round(d.p * 100)}%`); }
+        else if (d.type === 'lang') { s.lyrLang = d.lang; aiUpd(aiCur.p, `${LANGS[d.lang] || d.lang}로 받아쓰는 중…`); }
         else if (d.type === 'done') res(d.lines);
         else if (d.type === 'error') rej(new Error(d.message));
       };
       aiWorker.onerror = e => rej(new Error(e.message || 'worker'));
       LS.set('aiRunning', Date.now());
-      aiWorker.postMessage({ audio: mono, model: AI_LEVELS[aiLevel].id, language: null }, [mono.buffer]);
+      aiWorker.postMessage({ audio: mono, model: AI_LEVELS[aiLevel].id, language: s.lang || 'auto', hint: guessLang(s) });
     });
     if (!songById(s.id)) return true;
     const tag = t => `[${String(Math.floor(t / 60)).padStart(2, '0')}:${(t % 60).toFixed(2).padStart(5, '0')}]`;
+    if (!s.lang || s.lang === 'auto') { if (!s.lyrLang) s.lyrLang = null; } else s.lyrLang = s.lang;
     if (lines.length && !s.lyrics) { s.lyrics = lines.map(l => tag(l.t) + l.text).join('\n'); s.lyrAuto = 'done'; toast(`'${s.name}' 가사를 받아썼어요`); }
     else if (!s.lyrics) s.lyrAuto = 'none';
     await saveSong(s, true);
