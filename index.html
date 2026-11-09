@@ -899,7 +899,7 @@ function infoSheet(tabArg) {
       body = chips + `<div class="notebig"><div class="nm" id="nBig">♪</div><div class="nsub" id="nSub">재생하면 지금 나오는 음을 보여 드려요</div>
           <div class="npos" id="nPos"></div>${ins.kbd ? '<svg class="kbd" id="nKbd" viewBox="0 0 280 70"></svg>' : ''}<div class="nnext" id="nNext"></div></div>
         <div class="score" id="nSeq">${scoreHTML(notes, ins)}</div>
-        <p class="note" style="margin-top:8px">${notes.length}개의 음 · 오선 위 높이가 음의 높이예요. 글자 위 점은 높은 음, 아래 점은 낮은 음이에요. ${ins.strings ? '아래 ②1은 2번 줄 1프렛이에요. ' : ins.white ? '아래 숫자는 칼림바 표기예요. ' : '아래는 음 이름이에요. '}지나간 음은 노란색, 지금 음은 주황색으로 칠해져요. 계이름을 누르면 그 부분으로 이동해요.<br>반주가 많은 곡은 정확하지 않을 수 있어요.</p>
+        <p class="note" style="margin-top:8px">${notes.length}개의 음 · 오선 위 높이가 음의 높이예요. 글자 위 점은 높은 음, 아래 점은 낮은 음이에요. ${ins.strings ? '아래 ②1은 2번 줄 1프렛이에요. ' : ins.white ? '아래 숫자는 칼림바 표기예요. ' : ins.violin ? '아래 A1은 A현 1번 손가락이에요 (0=개방현, ↓반음 낮게, ↑반음 높게 짚기). ' : ins === INSTR.flute ? '아래는 음 이름이고, 위 운지는 T=왼손 엄지 · 숫자=손가락 · | 왼쪽은 왼손, 오른쪽은 오른손 · 4=새끼 · ↑=2옥타브예요. ' : '아래는 음 이름이에요. '}지나간 음은 노란색, 지금 음은 주황색으로 칠해져요. 계이름을 누르면 그 부분으로 이동해요.<br>반주가 많은 곡은 정확하지 않을 수 있어요.</p>
         <div class="sheet-btns"><button class="btn" id="nRe">다시 분석</button></div>`;
       mount = b => {
         const els = [...b.querySelectorAll('.st')];
@@ -952,6 +952,7 @@ const INSTR = {
   piano:    { label: '피아노',   lo: 36, hi: 96, center: 0,  base: 60, kbd: true },
   guitar:   { label: '기타',     lo: 40, hi: 76, center: 60, base: 60, strings: [64, 59, 55, 50, 45, 40], frets: 12 },
   ukulele:  { label: '우쿨렐레', lo: 60, hi: 81, center: 69, base: 60, strings: [69, 64, 60, 67], frets: 12 },
+  violin:   { label: '바이올린', lo: 55, hi: 88, center: 69, base: 60, violin: true },
   flute:    { label: '플루트',   lo: 60, hi: 93, center: 74, base: 60 },
   kalimba:  { label: '칼림바',   lo: 60, hi: 88, center: 72, base: 60, white: true }
 };
@@ -1013,6 +1014,20 @@ function scoreHTML(notes, ins) {
     return `<svg class="srow" viewBox="0 0 ${W} ${H}">${svg}</svg>`;
   }).join('');
 }
+// 플루트 운지: T=왼손 엄지(T♭=B♭ 레버), 숫자=손가락, | 왼쪽 왼손·오른쪽 오른손, 4=새끼, C/C#=발부분 키, ↑=2옥타브
+const FLUTE = { 60: 'T123 | 123C', 61: 'T123 | 123C#', 62: 'T123 | 123', 63: 'T123 | 1234', 64: 'T123 | 124', 65: 'T123 | 14', 66: 'T123 | 34',
+  67: 'T123 | 4', 68: 'T1234 | 4', 69: 'T12 | 4', 70: 'T♭1 | 4', 71: 'T1 | 4', 72: '1 | 4', 73: '0 | 4', 74: 'T23 | 123', 75: 'T23 | 1234' };
+function fluteFinger(m) {
+  if (FLUTE[m]) return FLUTE[m];
+  if (m >= 76 && m <= 83) return FLUTE[m - 12] + ' ↑';
+  return '—';
+}
+// 바이올린 1포지션: 줄(G D A E) + 손가락(0=개방현, ↓반음 낮게 ↑반음 높게)
+const VSTR = [['E', 76], ['A', 69], ['D', 62], ['G', 55]], VFIN = ['0', '1↓', '1', '2↓', '2', '3', '3↑'];
+function violinPos(m) {
+  for (const [n, open] of VSTR) { const d = m - open; if (d >= 0 && d <= 6) return `${n} ${VFIN[d]}`; }
+  const d = m - 76; return d > 6 ? `E ${d}+` : '';
+}
 // 악기별로 악보 아래에 적는 연주 정보 (기타·우쿨렐레: ②1 = 2번 줄 1프렛, 칼림바: 숫자, 피아노·플루트: 음 이름)
 const CIRC = ['①', '②', '③', '④', '⑤', '⑥'];
 function subLabel(m, ins) {
@@ -1021,6 +1036,7 @@ function subLabel(m, ins) {
     ins.strings.forEach((open, i) => { const f = m - open; if (f >= 0 && f <= ins.frets && (!best || f < best.f)) best = { s: i, f }; });
     return best ? CIRC[best.s] + best.f : '';
   }
+  if (ins.violin) return (violinPos(m) || '').replace(' ', '');
   if (ins.white) { const pc = ((m % 12) + 12) % 12, num = [1, 0, 2, 0, 3, 4, 0, 5, 0, 6, 0, 7][pc], o = Math.floor((m - 60) / 12); return num ? num + (o === 1 ? '˙' : o >= 2 ? '˙˙' : '') : '–'; }
   return letter(m);
 }
@@ -1038,15 +1054,8 @@ function position(m, ins) {
     const num = [1, 0, 2, 0, 3, 4, 0, 5, 0, 6, 0, 7][pc], o = Math.floor((m - 60) / 12);
     return `칼림바 숫자 ${num}${o === 1 ? '˙ (위에 점 1개)' : o >= 2 ? '˙˙ (위에 점 2개)' : ''}`;
   }
-  if (ins === INSTR.flute) {   // 플루트 기본 운지 (L=왼손, R=오른손, 새끼=오른손 새끼손가락 E♭키)
-    const F = { 60: 'L 엄지·1·2·3 │ R 1·2·3 + 새끼(낮은 C키)', 61: 'L 엄지·1·2·3 │ R 1·2·3 + 새끼(C#키)', 62: 'L 엄지·1·2·3 │ R 1·2·3',
-      63: 'L 엄지·1·2·3 │ R 1·2·3 + 새끼', 64: 'L 엄지·1·2·3 │ R 1·2 + 새끼', 65: 'L 엄지·1·2·3 │ R 1 + 새끼', 66: 'L 엄지·1·2·3 │ R 3 + 새끼',
-      67: 'L 엄지·1·2·3 │ R 새끼', 68: 'L 엄지·1·2·3 + 왼손 새끼(G#키) │ R 새끼', 69: 'L 엄지·1·2 │ R 새끼', 70: 'L 엄지(B♭키)·1 │ R 새끼',
-      71: 'L 엄지·1 │ R 새끼', 72: 'L 1 │ R 새끼', 73: 'L 모두 뗌 │ R 새끼', 74: 'L 엄지·2·3 │ R 1·2·3', 75: 'L 엄지·2·3 │ R 1·2·3 + 새끼' };
-    if (F[m]) return `운지 ${F[m]}`;
-    if (m >= 76 && m <= 83) return `운지 ${F[m - 12]} · 숨을 더 빠르게(2옥타브)`;
-    return '3옥타브 음이에요 · 플루트 운지표를 참고하세요';
-  }
+  if (ins.violin) return violinPos(m) || '';
+  if (ins === INSTR.flute) return fluteFinger(m);
   return '';
 }
 function drawKbd(svg, m) {
