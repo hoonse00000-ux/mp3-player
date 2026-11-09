@@ -2,7 +2,7 @@
 <html lang="ko">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
 <title>내 음악 플레이어</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;700;900&display=swap" rel="stylesheet">
@@ -11,7 +11,8 @@
   --bg:#14110f; --panel:#1f1a17; --panel2:#2a2420; --line:#3a322c;
   --text:#f3ece6; --muted:#a3968b; --accent:#ff7a45; --accent2:#ffb347; --danger:#ff5b5b;
 }
-*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent;touch-action:manipulation;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
+input,textarea{-webkit-user-select:text;user-select:text;-webkit-touch-callout:default}
 html,body{margin:0;background:var(--bg);color:var(--text);font-family:'Noto Sans KR',system-ui,sans-serif}
 body{min-height:100vh;padding-bottom:210px}
 button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
@@ -879,6 +880,12 @@ async function restoreState() {
   } catch (e) {}
   restoring = false;
 }
+
+/* ---------- 확대·복사 막기 ---------- */
+const isField = t => t && t.closest && t.closest('input,textarea');
+['gesturestart', 'gesturechange'].forEach(ev => document.addEventListener(ev, e => e.preventDefault(), { passive: false }));
+document.addEventListener('dblclick', e => { if (!isField(e.target)) e.preventDefault(); });
+['copy', 'cut', 'contextmenu', 'selectstart', 'dragstart'].forEach(ev => document.addEventListener(ev, e => { if (!isField(e.target)) e.preventDefault(); }));
 
 /* ---------- 시작 ---------- */
 (async () => {
