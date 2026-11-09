@@ -379,7 +379,7 @@ async function addFiles(fileList) {
     const s = { id: uid(), name: cleanName(f.name.replace(/\.[^.]+$/, '')), file: f.name, blob, size: f.size, added: Date.now() };
     await enrich(s, true);
     try { await put('songs', s); } catch (err) { db = null; await put('songs', s); }
-    songs.push(s); n++; queueLyrics(s);
+    songs.push(s); n++; queueLyrics(s); queueMelody(s);
   }
   toast(`${n}곡을 저장했어요`);
   render();
@@ -595,7 +595,7 @@ async function convertVideos(files) {
       const s = { id: uid(), name: cleanName(base), file: base + '.mp3', blob: mp3, size: mp3.size, added: Date.now(), dur: buf.duration, v2: true, v3: true, fromVideo: true };
       if (art) s.art = art;
       try { await put('songs', s); } catch (err) { db = null; await put('songs', s); }
-      songs.push(s); ok++; queueLyrics(s); lastId = s.id;
+      songs.push(s); ok++; queueLyrics(s); queueMelody(s); lastId = s.id;
       render();
     } catch (e) {
       const why = e.message === 'big' ? '영상이 너무 커요 (1.5GB 이하만 가능)' : e.message === 'decode' ? '소리가 없거나 지원하지 않는 형식이에요' : e.message === 'lame' ? '변환 도구를 불러오지 못했어요 (인터넷 확인)' : '메모리가 부족하거나 처리 중 오류가 났어요';
@@ -643,7 +643,8 @@ function songRow(s, i, ctx) {
   </div>`;
 }
 const subLine = s => [s.artist, s.dur ? fmt(s.dur) : fmtSize(s.size), s.blob ? '' : '파일 없음',
-  aiCur && aiCur.id === s.id ? `가사 받아쓰는 중 ${Math.round(aiCur.p * 100)}%` : s.lyrAuto === 'pending' && !s.lyrics ? '가사 대기 중' : ''].filter(Boolean).join(' · ');
+  aiCur && aiCur.id === s.id ? (aiCur.msg.startsWith('인터넷') ? '가사 찾는 중' : `가사 받아쓰는 중 ${Math.round(aiCur.p * 100)}%`) : s.lyrAuto === 'pending' && !s.lyrics ? '가사 대기 중' : '',
+  melodyJob && melodyJob.id === s.id ? `계이름 분석 중 ${Math.round(melodyJob.p * 100)}%` : ''].filter(Boolean).join(' · ');
 const artUrls = new Map();
 function artUrl(s) {
   if (!s || !s.art) return '';
@@ -872,9 +873,13 @@ function infoSheet(tabArg) {
     const ins = INSTR[instrument] || INSTR.piano;
     const chips = `<div class="inschips">${Object.entries(INSTR).map(([k, v]) => `<button data-ins="${k}" class="${k === instrument ? 'on' : ''}">${v.label}</button>`).join('')}</div>`;
     if (!s.melody) {
-      body = chips + `<div class="nolyr" style="padding:26px 0 18px">아직 계이름을 분석하지 않았어요<br><span style="font-size:13px">곡을 듣고 멜로디의 음을 찾아 ${ins.label} 계이름으로 알려 드려요</span></div>
-        <div class="vstat" id="nStat" style="text-align:center"></div><div class="prog" id="nProg" style="display:none"><i id="nBar"></i></div>
-        <div class="sheet-btns"><button class="btn primary" id="nGo">계이름 분석하기</button></div>`;
+      if (s.melAuto === 'none' || s.melAuto === 'error') body = chips + `<div class="nolyr" style="padding:26px 0 18px">${s.melAuto === 'none' ? '이 곡에서는 멜로디를 찾지 못했어요' : '분석하지 못했어요'}<br><span style="font-size:13px">반주만 있거나 소리가 너무 겹친 곡은 어려워요</span></div>
+        <div class="sheet-btns"><button class="btn" id="nRetry">다시 분석</button></div>`;
+      else {
+        if (!(melodyJob && melodyJob.id === s.id) && !melQ.includes(s.id)) queueMelody(s, true);   // 탭을 열면 바로 분석 시작
+        body = chips + `<div class="nolyr" style="padding:26px 0 14px">곡을 듣고 계이름을 찾고 있어요<br><span style="font-size:13px">다 되면 여기에 ${ins.label} 계이름 악보가 나와요</span></div>
+        <div class="prog" id="nProg"><i id="nBar" style="width:${melodyJob && melodyJob.id === s.id ? Math.round(melodyJob.p * 100) : 0}%"></i></div><div class="vstat" id="nStat" style="text-align:center">${melodyJob && melodyJob.id === s.id ? esc(melodyJob.msg) : '앞의 곡 분석이 끝나면 시작해요'}</div>`;
+      }
     } else {
       const notes = mapNotes(s.melody.notes, ins);
       body = chips + `<div class="notebig"><div class="nm" id="nBig">♪</div><div class="nsub" id="nSub">재생하면 지금 나오는 음을 보여 드려요</div>
@@ -886,14 +891,14 @@ function infoSheet(tabArg) {
         const els = [...b.querySelectorAll('.st')];
         els.forEach(el => el.onclick = () => { audio.currentTime = notes[+el.dataset.i].t; if (audio.paused) audio.play().catch(() => {}); });
         noteState = { notes, els, idx: -2, ins, box: b.querySelector('#nSeq'), big: b.querySelector('#nBig'), sub: b.querySelector('#nSub'), pos: b.querySelector('#nPos'), next: b.querySelector('#nNext'), kbd: b.querySelector('#nKbd') };
-        b.querySelector('#nRe').onclick = () => { delete s.melody; saveSong(s, true); infoSheet('notes'); setTimeout(() => runMelody(s), 50); };
+        b.querySelector('#nRe').onclick = () => { delete s.melody; saveSong(s, true); queueMelody(s, true); infoSheet('notes'); };
         requestAnimationFrame(noteLoop);
       };
     }
     const inner = mount;
     mount = b => {
       b.querySelectorAll('[data-ins]').forEach(x => x.onclick = () => { instrument = x.dataset.ins; LS.set('instrument', instrument); infoSheet('notes'); });
-      const go = b.querySelector('#nGo'); if (go) go.onclick = () => runMelody(s);
+      const rt = b.querySelector('#nRetry'); if (rt) rt.onclick = () => { s.melAuto = 'pending'; queueMelody(s, true); infoSheet('notes'); };
       if (melodyJob && melodyJob.id === s.id) showMelodyProgress();
       if (inner) inner(b);
     };
@@ -1056,30 +1061,82 @@ function noteLoop() {
 }
 // 분석 (YIN 음높이 추적 → 음 단위로 묶기)
 let melodyJob = null;
+// 제자리 FFT (re, im 길이 N = 2의 거듭제곱)
+function fft(re, im, inv) {
+  const N = re.length;
+  for (let i = 1, j = 0; i < N; i++) { let b = N >> 1; for (; j & b; b >>= 1) j ^= b; j ^= b; if (i < j) { [re[i], re[j]] = [re[j], re[i]]; [im[i], im[j]] = [im[j], im[i]]; } }
+  for (let len = 2; len <= N; len <<= 1) {
+    const a = (inv ? 2 : -2) * Math.PI / len, wr = Math.cos(a), wi = Math.sin(a);
+    for (let i = 0; i < N; i += len) {
+      let cr = 1, ci = 0;
+      for (let k = 0; k < len / 2; k++) {
+        const p = i + k, q = p + len / 2, tr = re[q] * cr - im[q] * ci, ti = re[q] * ci + im[q] * cr;
+        re[q] = re[p] - tr; im[q] = im[p] - ti; re[p] += tr; im[p] += ti;
+        const nr = cr * wr - ci * wi; ci = cr * wi + ci * wr; cr = nr;
+      }
+    }
+  }
+}
+// 가운데(목소리)에서 나는 소리만 남기고, 양옆 반주와 목소리 음역 밖의 소리는 줄이기
+async function isolateVocal(buf, onP) {
+  const SR = buf.sampleRate, N = 512, H = 128, n = buf.length;
+  const L = buf.getChannelData(0), R = buf.numberOfChannels > 1 ? buf.getChannelData(1) : L;
+  const out = new Float32Array(n), win = new Float32Array(N);
+  for (let i = 0; i < N; i++) win[i] = 0.5 - 0.5 * Math.cos(2 * Math.PI * i / N);
+  const kLo = Math.floor(140 * N / SR), kHi = Math.ceil(1500 * N / SR);
+  const re = new Float32Array(N), im = new Float32Array(N), cr = new Float32Array(N), ci = new Float32Array(N);
+  let tk = performance.now();
+  for (let s0 = 0; s0 + N <= n; s0 += H) {
+    for (let i = 0; i < N; i++) { re[i] = L[s0 + i] * win[i]; im[i] = R[s0 + i] * win[i]; }
+    fft(re, im, false);                                   // 왼쪽 + i·오른쪽 을 한 번에
+    cr.fill(0); ci.fill(0);
+    for (let k = kLo; k <= kHi && k < N / 2; k++) {
+      const j = (N - k) % N;
+      const lr = (re[k] + re[j]) / 2, li = (im[k] - im[j]) / 2;       // 왼쪽 스펙트럼
+      const rr = (im[k] + im[j]) / 2, ri = (re[j] - re[k]) / 2;       // 오른쪽 스펙트럼
+      const mr = (lr + rr) / 2, mi = (li + ri) / 2, sr = (lr - rr) / 2, si = (li - ri) / 2;
+      const m2 = mr * mr + mi * mi, s2 = sr * sr + si * si, g = m2 / (m2 + 4 * s2 + 1e-12);
+      const g2 = g * g, edge = Math.min(1, (k - kLo + 1) / 3, (kHi - k + 1) / 3), w = g2 * g2 * edge;
+      cr[k] = mr * w; ci[k] = mi * w; cr[j] = mr * w; ci[j] = -mi * w;
+    }
+    fft(cr, ci, true);
+    for (let i = 0; i < N; i++) out[s0 + i] += cr[i] / N * win[i] * (2 / 3) * (H / (N / 4));
+    if (performance.now() - tk > 40) { onP(s0 / n); await new Promise(r => setTimeout(r, 0)); tk = performance.now(); }
+  }
+  return out;
+}
 function showMelodyProgress() {
-  const p = $('#nProg'), st = $('#nStat'), go = $('#nGo');
+  const p = $('#nProg'), st = $('#nStat');
   if (!melodyJob) return;
   if (p) { p.style.display = 'block'; $('#nBar').style.width = Math.round(melodyJob.p * 100) + '%'; }
   if (st) st.textContent = melodyJob.msg;
-  if (go) go.style.display = 'none';
 }
+// 자동 분석 대기열 (곡을 올리면 차례로 분석)
+let melQ = [], melBusy = false, melTick = 0;
+function queueMelody(s, first) {
+  if (!s || s.melody || !s.blob) return;
+  s.melAuto = 'pending'; put('songs', s).catch(() => {});
+  melQ = melQ.filter(id => id !== s.id);
+  first ? melQ.unshift(s.id) : melQ.push(s.id);
+  pumpMelody();
+}
+async function pumpMelody() {
+  if (melBusy) return; melBusy = true;
+  while (melQ.length) { const s = songById(melQ.shift()); if (s && !s.melody && s.blob) await runMelody(s); }
+  melBusy = false;
+}
+function resumeMelody(delay) { setTimeout(() => songs.filter(x => x.melAuto === 'pending' && !x.melody && x.blob).forEach(x => queueMelody(x)), delay); }
 async function runMelody(s) {
-  if (melodyJob) return toast('다른 곡을 분석하는 중이에요');
-  if (!s.blob) return toast('이 곡의 파일이 없어요');
-  melodyJob = { id: s.id, p: 0, msg: '곡을 읽는 중…' }; showMelodyProgress();
-  const upd = (p, msg) => { melodyJob.p = p; if (msg) melodyJob.msg = msg; if (infoOpen && infoTab === 'notes' && infoSongId === s.id) showMelodyProgress(); };
+  melodyJob = { id: s.id, p: 0, msg: '곡을 읽는 중…' }; showMelodyProgress(); softRender();
+  const upd = (p, msg) => { melodyJob.p = p; if (msg) melodyJob.msg = msg; if (infoOpen && infoTab === 'notes' && infoSongId === s.id) showMelodyProgress(); if (Date.now() - melTick > 1500) { melTick = Date.now(); softRender(); } };
   try {
     const SR = 8000;
     const OAC = window.OfflineAudioContext || window.webkitOfflineAudioContext;
-    const raw = await new Promise(async (res, rej) => { const ab = await s.blob.arrayBuffer(); const c = new OAC(1, 1, SR); const pr = c.decodeAudioData(ab, res, rej); if (pr && pr.then) pr.then(res, rej); });
-    upd(0.08, '멜로디만 골라내는 중…');
-    const oc = new OAC(1, raw.length, SR), src = oc.createBufferSource(); src.buffer = raw;
-    const hp = oc.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 160;
-    const hp2 = oc.createBiquadFilter(); hp2.type = 'highpass'; hp2.frequency.value = 160;
-    const lp = oc.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 1400;
-    src.connect(hp); hp.connect(hp2); hp2.connect(lp); lp.connect(oc.destination); src.start();
-    const x = (await oc.startRendering()).getChannelData(0);
-    upd(0.12, '음높이를 찾는 중… 0%');
+    const raw = await new Promise(async (res, rej) => { const ab = await s.blob.arrayBuffer(); const c = new OAC(2, 1, SR); const pr = c.decodeAudioData(ab, res, rej); if (pr && pr.then) pr.then(res, rej); });
+    upd(0.06, '목소리만 골라내는 중… 0%');
+    const x = await isolateVocal(raw, p => upd(0.06 + p * 0.3, `목소리만 골라내는 중… ${Math.round(p * 100)}%`));
+    upd(0.36);
+    upd(0.36, '음높이를 찾는 중… 0%');
     const W = 512, H = 160, tmin = Math.floor(SR / 1050), tmax = Math.ceil(SR / 75), dd = new Float32Array(tmax + 2);
     const frames = []; let tk = performance.now();
     for (let i = 0; i + W + tmax < x.length; i += H) {
@@ -1094,7 +1151,7 @@ async function runMelody(s) {
       let f = 0;
       if (best > 0) { const a = dd[best - 1], b = dd[best], c = dd[best + 1], den = a + c - 2 * b; f = SR / (best + (den ? (a - c) / (2 * den) : 0)); }
       frames.push({ t: i / SR, f, rms });
-      if (performance.now() - tk > 40) { upd(0.12 + 0.83 * i / x.length, `음높이를 찾는 중… ${Math.round(i / x.length * 100)}%`); await new Promise(r => setTimeout(r, 0)); tk = performance.now(); }
+      if (performance.now() - tk > 40) { upd(0.36 + 0.6 * i / x.length, `음높이를 찾는 중… ${Math.round(i / x.length * 100)}%`); await new Promise(r => setTimeout(r, 0)); tk = performance.now(); }
     }
     upd(0.96, '음을 정리하는 중…');
     const rs = frames.map(f => f.rms).filter(v => v > 0).sort((a, b) => a - b), gate = Math.max(0.004, (rs[Math.floor(rs.length * 0.35)] || 0) * 0.8);
@@ -1114,14 +1171,14 @@ async function runMelody(s) {
     const merged = [];
     for (const n of notes) { const L = merged[merged.length - 1]; if (L && L.m === n.m && n.t - L.e < 0.025) L.e = n.e; else merged.push({ ...n }); }
     if (merged.length < 3) throw new Error('few');
-    s.melody = { v: 1, notes: merged.map(n => [+n.t.toFixed(3), +(n.e - n.t).toFixed(3), n.m]) };
+    s.melody = { v: 2, notes: merged.map(n => [+n.t.toFixed(3), +(n.e - n.t).toFixed(3), n.m]) };
+    s.melAuto = 'done';
     await saveSong(s, true);
-    melodyJob = null;
-    toast(`계이름 ${merged.length}음을 찾았어요`);
   } catch (e) {
-    melodyJob = null;
-    toast(e.message === 'few' ? '멜로디를 찾지 못했어요' : '분석하지 못했어요');
+    s.melAuto = e.message === 'few' ? 'none' : 'error';
+    await put('songs', s).catch(() => {});
   }
+  melodyJob = null; softRender();
   if (infoOpen && infoTab === 'notes' && infoSongId === s.id) infoSheet('notes');
 }
 
@@ -1832,6 +1889,7 @@ if ('serviceWorker' in navigator && location.protocol === 'https:') {
   localReadyResolve();
   if (aiCrashed) toast(aiDisabled() ? '이 기기는 메모리가 부족해 가사 자동 받아쓰기를 껐어요' : '가사 AI가 메모리를 너무 써서 앱이 멈췄어요. 더 가벼운 방식으로 다시 해 볼게요');
   resumeLyrics(aiCrashed ? 30000 : 10000);   // 앱이 다 열린 뒤 천천히 시작
+  resumeMelody(5000);
   renderAccount();
   upgradeOldSongs();
   setPlayIcon(); updateModes(); render();
