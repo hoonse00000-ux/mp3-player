@@ -1,8 +1,8 @@
 // 내 음악 - 오프라인 실행용 서비스 워커
 // 앱 파일은 "네트워크 우선"(항상 최신 버전, 인터넷이 없을 때만 저장본 사용)
 // 글꼴·Firebase 라이브러리는 "저장본 우선"
-const CACHE = 'mp3p-v2';
-const CORE = ['./', './index.html', './manifest.json', './icon-180.png', './icon-192.png', './icon-512.png', './lame.min.js'];
+const CACHE = 'mp3p-v3';
+const CORE = ['./', './index.html', './manifest.json', './icon-180.png', './icon-192.png', './icon-512.png', './lame.min.js', './lyrics-worker.js'];
 
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(CORE)).then(() => self.skipWaiting()));
@@ -17,7 +17,7 @@ self.addEventListener('fetch', e => {
   if (req.method !== 'GET') return;
   const url = new URL(req.url);
   const same = url.origin === location.origin;
-  const lib = /(^|\.)gstatic\.com$/.test(url.hostname) || url.hostname === 'fonts.googleapis.com';
+  const lib = /(^|\.)gstatic\.com$/.test(url.hostname) || url.hostname === 'fonts.googleapis.com' || url.hostname === 'cdn.jsdelivr.net';
   if (same) {
     e.respondWith(
       fetch(req).then(res => {

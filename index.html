@@ -83,6 +83,26 @@ main{padding:8px 14px}
 .lline.on{color:var(--text);font-weight:700;transform:scale(1.05)}
 .nolyr{text-align:center;color:var(--muted);padding:44px 0 30px;font-size:15px}
 .lyr-edit{min-height:44vh;resize:vertical;line-height:1.7;font-family:inherit}
+.seg3 button{font-size:13px}
+.inschips{display:flex;gap:6px;overflow-x:auto;padding-bottom:4px;margin-bottom:12px;-webkit-overflow-scrolling:touch}
+.inschips button{flex-shrink:0;padding:8px 13px;border-radius:999px;background:var(--panel2);font-size:13px;font-weight:700;color:var(--muted);border:1.5px solid transparent}
+.inschips button.on{border-color:var(--accent);color:var(--accent)}
+.notebig{background:var(--bg);border-radius:16px;padding:14px 12px 12px;text-align:center;margin-bottom:12px}
+.notebig .nm{font-size:44px;font-weight:900;line-height:1.1;color:var(--accent2);min-height:50px}
+.notebig .nsub{font-size:13px;color:var(--muted);margin-top:4px;min-height:18px}
+.notebig .npos{font-size:15px;font-weight:700;margin-top:6px;min-height:20px}
+.notebig .nnext{font-size:13px;color:var(--muted);margin-top:8px;min-height:18px}
+.kbd{width:100%;max-width:400px;height:auto;margin:10px auto 0;display:block}
+.nseq{max-height:30vh;overflow:auto;padding:2px 0;-webkit-overflow-scrolling:touch}
+.nline{display:flex;flex-wrap:wrap;gap:4px;padding:5px 0;border-bottom:1px solid var(--line)}
+.nline .lt{width:40px;font-size:11px;color:var(--muted);padding-top:6px;flex-shrink:0}
+.nt{position:relative;padding:5px 7px 7px;border-radius:8px;background:var(--panel2);font-size:14px;font-weight:700;cursor:pointer;line-height:1}
+.nt.on{background:var(--accent);color:#1a0d06}
+.nt.hi::before,.nt.hi2::before{content:'';position:absolute;top:1px;left:50%;width:4px;height:4px;margin-left:-2px;border-radius:50%;background:currentColor}
+.nt.hi2::after{content:'';position:absolute;top:1px;left:50%;width:4px;height:4px;margin-left:4px;border-radius:50%;background:currentColor}
+.nt.lo::after{content:'';position:absolute;bottom:1px;left:50%;width:4px;height:4px;margin-left:-2px;border-radius:50%;background:currentColor}
+.ai-opts{display:flex;flex-direction:column;gap:12px;margin:6px 0 4px}
+.ai-opts label{font-size:13px;color:var(--muted);display:block;margin-bottom:6px}
 .plcard{display:flex;align-items:center;gap:12px;padding:12px;border-radius:14px;background:var(--panel);margin-bottom:8px}
 .cover{width:48px;height:48px;border-radius:12px;background:linear-gradient(135deg,var(--accent),var(--accent2));display:grid;place-items:center;font-size:22px;color:#1a0d06;flex-shrink:0}
 .dethead{display:flex;align-items:center;gap:8px;margin:4px 0 6px}
@@ -207,8 +227,6 @@ input[type=range]::-moz-range-thumb{width:16px;height:16px;border-radius:50%;bac
 
 <script>
 // Firebase 설정 (웹에 공개돼도 괜찮은 값이에요. 보안은 Firebase 콘솔의 규칙과 승인된 도메인으로 지켜요.)
-// 구글 드라이브 동기화용 OAuth 클라이언트 ID (Google Cloud > API 및 서비스 > 사용자 인증 정보)
-window.GOOGLE_CLIENT_ID = '';
 window.FIREBASE_CONFIG = {
   apiKey: "AIzaSyClt5JQwO1zA6C4uygTcCrnSG0dDHYQl1I",
   authDomain: "mp-3-e2ac0.firebaseapp.com",
@@ -232,6 +250,7 @@ const I_ADD = ICO('<rect x="3.5" y="3.5" width="17" height="17" rx="4"/><path d=
 const I_REM = ICO('<rect x="3.5" y="3.5" width="17" height="17" rx="4"/><path d="M8 12h8"/>');
 const I_SAVE = ICO('<path d="M12 4v11M7.5 10.5 12 15l4.5-4.5"/><path d="M4.5 16v2.5A1.5 1.5 0 0 0 6 20h12a1.5 1.5 0 0 0 1.5-1.5V16"/>');
 const I_DEL = ICO('<path d="M4.5 7h15M10 4h4M6.5 7l1 12.5A1.5 1.5 0 0 0 9 21h6a1.5 1.5 0 0 0 1.5-1.5L17.5 7M10 11v6M14 11v6"/>');
+const I_MIC = ICO('<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21M8.5 21h7"/>');
 const FILM = '<svg class="ico-s" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2.5"/><path d="M7.5 5v14M16.5 5v14M3 9.7h4.5M3 14.3h4.5M16.5 9.7H21M16.5 14.3H21"/></svg>';
 const fmtSize = b => b >= 1048576 ? (b / 1048576).toFixed(1) + 'MB' : Math.max(1, Math.round(b / 1024)) + 'KB';
 
@@ -303,15 +322,15 @@ const plById = id => playlists.find(p => p.id === id);
 let toastT;
 function toast(msg) { const t = $('#toast'); t.textContent = msg; t.classList.add('show'); clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove('show'), 1800); }
 let sheetClose = null;
-let infoOpen = false, infoTab = 'lyrics', infoSongId = null, lyrState = null;
+let infoOpen = false, infoTab = 'lyrics', infoSongId = null, lyrState = null, noteState = null;
 function openSheet(html, mount) {
-  infoOpen = false; lyrState = null;
+  infoOpen = false; lyrState = null; noteState = null;
   $('#sheetBody').innerHTML = html;
   $('#mask').classList.add('show'); $('#sheet').classList.add('show');
   if (mount) mount($('#sheetBody'));
 }
 function closeSheet() {
-  infoOpen = false; lyrState = null;
+  infoOpen = false; lyrState = null; noteState = null;
   $('#mask').classList.remove('show'); $('#sheet').classList.remove('show');
   if (sheetClose) { const f = sheetClose; sheetClose = null; f(); }
 }
@@ -587,7 +606,7 @@ async function convertVideos(files) {
   if (ok) toast(`${ok}곡을 추가했어요`);
 }
 function saveMp3(s) {
-  if (!s.blob) return toast('아직 클라우드에서 받는 중이에요');
+  if (!s.blob) return toast('이 곡의 파일이 없어요');
   try {
     const a = document.createElement('a'), u = URL.createObjectURL(s.blob);
     a.href = u; a.download = (s.name || 'music').replace(/[\\/:*?"<>|]/g, '_') + '.mp3';
@@ -614,8 +633,7 @@ function songRow(s, i, ctx) {
     <button class="ic" data-menu="${s.id}" aria-label="메뉴">⋯</button>
   </div>`;
 }
-const CLOUD_TXT = { up: '올리는 중', down: '받는 중', remote: '드라이브', err: '동기화 실패' };
-const subLine = s => [s.artist, s.dur ? fmt(s.dur) : fmtSize(s.size), CLOUD_TXT[s.cloud]].filter(Boolean).join(' · ');
+const subLine = s => [s.artist, s.dur ? fmt(s.dur) : fmtSize(s.size), s.blob ? '' : '파일 없음'].filter(Boolean).join(' · ');
 const artUrls = new Map();
 function artUrl(s) {
   if (!s || !s.art) return '';
@@ -812,13 +830,56 @@ function infoSheet(tabArg) {
   const art = artUrl(s);
   const head = `<div class="ihead"><div class="thumb">${art ? `<img src="${art}" alt="">` : '<span>♪</span>'}</div>
     <div class="info"><p class="it-title">${esc(s.name)}</p><p class="it-artist">${esc(s.artist || '가수 정보 없음')}</p></div></div>
-    <div class="seg"><button data-t="lyrics" class="${infoTab === 'lyrics' ? 'on' : ''}">가사</button><button data-t="info" class="${infoTab === 'info' ? 'on' : ''}">곡 정보</button></div>`;
-  let body = '';
-  const lrc = infoTab === 'lyrics' && s.lyrics ? parseLrc(s.lyrics) : null;
+    <div class="seg seg3">${[['lyrics', '가사'], ['notes', '계이름'], ['info', '곡 정보']].map(([k, l]) => `<button data-t="${k}" class="${infoTab === k ? 'on' : ''}">${l}</button>`).join('')}</div>`;
+  let body = '', mount = null;
   if (infoTab === 'lyrics') {
-    if (!s.lyrics) body = `<div class="nolyr">가사가 없습니다</div><div class="sheet-btns"><button class="btn primary" id="lEdit">${I_EDIT} 가사 쓰기</button></div>`;
+    const lrc = s.lyrics ? parseLrc(s.lyrics) : null;
+    const aiBtn = `<button class="btn" id="lAi">${I_MIC} AI 받아쓰기</button>`;
+    if (!s.lyrics) body = `<div class="nolyr">가사가 없습니다</div><div class="sheet-btns">${aiBtn}<button class="btn primary" id="lEdit">${I_EDIT} 가사 쓰기</button></div>`;
     else body = `<div class="lyrics" id="lyrBox">${lrc ? lrc.map((l, i) => `<div class="lline" data-i="${i}">${esc(l.text) || '♪'}</div>`).join('') : esc(s.lyrics)}</div>
-      <div class="sheet-btns"><button class="btn" id="lEdit">${I_EDIT} 가사 수정</button></div>`;
+      <div class="sheet-btns">${aiBtn}<button class="btn" id="lEdit">${I_EDIT} 가사 수정</button></div>`;
+    mount = b => {
+      b.querySelector('#lEdit').onclick = () => lyricsEditor(s);
+      b.querySelector('#lAi').onclick = () => aiLyricsSheet(s);
+      if (lrc) {
+        const els = [...b.querySelectorAll('.lline')];
+        els.forEach(el => el.onclick = () => { audio.currentTime = lrc[+el.dataset.i].t; if (audio.paused) audio.play().catch(() => {}); });
+        lyrState = { lines: lrc, els, idx: -1, box: b.querySelector('#lyrBox') };
+        syncLyrics(true);
+      }
+    };
+  } else if (infoTab === 'notes') {
+    const ins = INSTR[instrument] || INSTR.piano;
+    const chips = `<div class="inschips">${Object.entries(INSTR).map(([k, v]) => `<button data-ins="${k}" class="${k === instrument ? 'on' : ''}">${v.label}</button>`).join('')}</div>`;
+    if (!s.melody) {
+      body = chips + `<div class="nolyr" style="padding:26px 0 18px">아직 계이름을 분석하지 않았어요<br><span style="font-size:13px">곡을 듣고 멜로디의 음을 찾아 ${ins.label} 계이름으로 알려 드려요</span></div>
+        <div class="vstat" id="nStat" style="text-align:center"></div><div class="prog" id="nProg" style="display:none"><i id="nBar"></i></div>
+        <div class="sheet-btns"><button class="btn primary" id="nGo">계이름 분석하기</button></div>`;
+    } else {
+      const notes = mapNotes(s.melody.notes, ins);
+      const lines = []; let line = [];
+      notes.forEach((n, i) => { if (line.length && (n.t - (notes[i - 1].t + notes[i - 1].d) > 0.7 || line.length >= 12)) { lines.push(line); line = []; } line.push(i); });
+      if (line.length) lines.push(line);
+      body = chips + `<div class="notebig"><div class="nm" id="nBig">♪</div><div class="nsub" id="nSub">재생하면 지금 나오는 음을 보여 드려요</div>
+          <div class="npos" id="nPos"></div>${ins.kbd ? '<svg class="kbd" id="nKbd" viewBox="0 0 280 70"></svg>' : ''}<div class="nnext" id="nNext"></div></div>
+        <div class="nseq" id="nSeq">${lines.map(L => `<div class="nline"><span class="lt">${fmt(notes[L[0]].t)}</span>${L.map(i => `<span class="nt ${octClass(notes[i].m, ins)}" data-i="${i}">${solfa(notes[i].m)}</span>`).join('')}</div>`).join('')}</div>
+        <p class="note" style="margin-top:8px">${notes.length}개의 음을 찾았어요 · 점이 위에 있으면 높은 음, 아래에 있으면 낮은 음이에요. 음을 누르면 그 부분으로 이동해요.<br>반주가 많은 곡은 정확하지 않을 수 있어요.</p>
+        <div class="sheet-btns"><button class="btn" id="nRe">다시 분석</button></div>`;
+      mount = b => {
+        const els = [...b.querySelectorAll('.nt')];
+        els.forEach(el => el.onclick = () => { audio.currentTime = notes[+el.dataset.i].t; if (audio.paused) audio.play().catch(() => {}); });
+        noteState = { notes, els, idx: -2, ins, box: b.querySelector('#nSeq'), big: b.querySelector('#nBig'), sub: b.querySelector('#nSub'), pos: b.querySelector('#nPos'), next: b.querySelector('#nNext'), kbd: b.querySelector('#nKbd') };
+        b.querySelector('#nRe').onclick = () => { delete s.melody; saveSong(s, true); infoSheet('notes'); setTimeout(() => runMelody(s), 50); };
+        requestAnimationFrame(noteLoop);
+      };
+    }
+    const inner = mount;
+    mount = b => {
+      b.querySelectorAll('[data-ins]').forEach(x => x.onclick = () => { instrument = x.dataset.ins; LS.set('instrument', instrument); infoSheet('notes'); });
+      const go = b.querySelector('#nGo'); if (go) go.onclick = () => runMelody(s);
+      if (melodyJob && melodyJob.id === s.id) showMelodyProgress();
+      if (inner) inner(b);
+    };
   } else {
     const srcName = queueSrc === 'lib' ? '전체 곡' : (plById(queueSrc)?.name || '');
     const inPls = playlists.filter(p => p.songIds.includes(s.id)).map(p => p.name);
@@ -827,26 +888,266 @@ function infoSheet(tabArg) {
       ['앨범', s.album], ['길이', s.dur ? fmt(s.dur) : ''], ['파일 크기', fmtSize(s.size)], ['원본 파일', s.file],
       ['추가한 날', isNaN(d) ? '' : `${d.getFullYear()}.${d.getMonth() + 1}.${d.getDate()}`],
       ['재생 목록', srcName ? `${srcName} · ${pos + 1}/${order.length}` : ''], ['담긴 곳', inPls.join(', ')],
-      ['가사', s.lyrics ? (parseLrc(s.lyrics) ? '있음 (재생에 맞춰 표시)' : '있음') : '없음']
+      ['가사', s.lyrics ? (parseLrc(s.lyrics) ? '있음 (재생에 맞춰 표시)' : '있음') : '없음'],
+      ['계이름', s.melody ? `분석함 (${s.melody.notes.length}음)` : '분석 전']
     ].filter(x => x[1]);
     body = `${art ? `<div class="bigart"><img src="${art}" alt=""></div>` : ''}
       <table class="it-table">${rows.map(([k, v]) => `<tr><td>${k}</td><td>${esc(v)}</td></tr>`).join('')}</table>
       <div class="sheet-btns"><button class="btn" id="iRen">이름 바꾸기</button><button class="btn" id="iPl">플레이리스트에 담기</button></div>`;
+    mount = b => {
+      b.querySelector('#iRen').onclick = async () => { closeSheet(); await new Promise(r => setTimeout(r, 230)); await renameSong(s); };
+      b.querySelector('#iPl').onclick = async () => { closeSheet(); await new Promise(r => setTimeout(r, 230)); addToPlaylists(s); };
+    };
   }
   openSheet(head + body, b => {
     b.querySelectorAll('[data-t]').forEach(x => x.onclick = () => infoSheet(x.dataset.t));
-    const le = b.querySelector('#lEdit'); if (le) le.onclick = () => lyricsEditor(s);
-    const ir = b.querySelector('#iRen'); if (ir) ir.onclick = async () => { closeSheet(); await new Promise(r => setTimeout(r, 230)); await renameSong(s); };
-    const ip = b.querySelector('#iPl'); if (ip) ip.onclick = async () => { closeSheet(); await new Promise(r => setTimeout(r, 230)); addToPlaylists(s); };
-    if (lrc) {
-      const els = [...b.querySelectorAll('.lline')];
-      els.forEach(el => el.onclick = () => { audio.currentTime = lrc[+el.dataset.i].t; if (audio.paused) audio.play().catch(() => {}); });
-      lyrState = { lines: lrc, els, idx: -1, box: b.querySelector('#lyrBox') };
-      syncLyrics(true);
-    }
+    if (mount) mount(b);
   });
   infoOpen = true; infoSongId = s.id;
 }
+
+/* ---------- 계이름 (멜로디 음높이 분석) ---------- */
+const SOLFA = ['도', '도#', '레', '레#', '미', '파', '파#', '솔', '솔#', '라', '라#', '시'];
+const LETTER = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+const solfa = m => SOLFA[((m % 12) + 12) % 12];
+const letter = m => LETTER[((m % 12) + 12) % 12] + (Math.floor(m / 12) - 1);
+const INSTR = {
+  piano:    { label: '피아노',   lo: 36, hi: 96, center: 0,  base: 60, kbd: true },
+  guitar:   { label: '기타',     lo: 40, hi: 76, center: 60, base: 60, strings: [64, 59, 55, 50, 45, 40], frets: 12 },
+  ukulele:  { label: '우쿨렐레', lo: 60, hi: 81, center: 69, base: 60, strings: [69, 64, 60, 67], frets: 12 },
+  recorder: { label: '리코더',   lo: 72, hi: 93, center: 79, base: 72 },
+  kalimba:  { label: '칼림바',   lo: 60, hi: 88, center: 72, base: 60, white: true }
+};
+let instrument = LS.get('instrument', 'piano');
+if (!INSTR[instrument]) instrument = 'piano';
+function mapNotes(raw, ins) {
+  // 음역 밖으로 나가는 음이 가장 적은 옥타브로 옮기기 (같으면 덜 옮기는 쪽)
+  const ms = raw.map(n => n[2]).sort((a, b) => a - b), med = ms[Math.floor(ms.length / 2)] || 60;
+  let shift = 0, bestScore = Infinity;
+  for (let k = -3; k <= 3; k++) {
+    const out = ms.filter(m => m + k * 12 < ins.lo || m + k * 12 > ins.hi).length;
+    const score = out * 100 + Math.abs(k) * 10 + (ins.center ? Math.abs(med + k * 12 - ins.center) / 12 : 0);
+    if (score < bestScore) { bestScore = score; shift = k * 12; }
+  }
+  return raw.map(([t, d, m0]) => {
+    let m = m0 + shift;
+    while (m < ins.lo) m += 12;
+    while (m > ins.hi) m -= 12;
+    return { t, d, m };
+  });
+}
+function octClass(m, ins) { const o = Math.floor((m - ins.base) / 12); return o < 0 ? 'lo' : o === 1 ? 'hi' : o >= 2 ? 'hi2' : ''; }
+function octWord(m, ins) { const o = Math.floor((m - ins.base) / 12); return o < 0 ? '낮은 ' : o === 1 ? '높은 ' : o >= 2 ? '아주 높은 ' : ''; }
+function position(m, ins) {
+  if (ins.strings) {
+    let best = null;
+    ins.strings.forEach((open, i) => { const f = m - open; if (f >= 0 && f <= ins.frets && (!best || f < best.f)) best = { s: i + 1, f }; });
+    return best ? `${best.s}번 줄 ${best.f === 0 ? '개방현(누르지 않음)' : best.f + '프렛'}` : '이 악기 음역 밖이에요';
+  }
+  if (ins.white) {
+    const pc = ((m % 12) + 12) % 12;
+    if (SOLFA[pc].includes('#')) return `칼림바에 없는 반음이에요 (가까운 음: ${SOLFA[pc - 1]} 또는 ${SOLFA[(pc + 1) % 12]})`;
+    const num = [1, 0, 2, 0, 3, 4, 0, 5, 0, 6, 0, 7][pc], o = Math.floor((m - 60) / 12);
+    return `칼림바 숫자 ${num}${o === 1 ? '˙ (위에 점 1개)' : o >= 2 ? '˙˙ (위에 점 2개)' : ''}`;
+  }
+  if (ins === INSTR.recorder) {   // 바로크식 소프라노 리코더 운지 (●막음 ○열기 ◐반쯤) · 엄지│왼손 3│오른손 4
+    const F = { 72: '●│●●●│●●●●', 74: '●│●●●│●●●○', 76: '●│●●●│●●○○', 77: '●│●●●│●○●●', 78: '●│●●●│○●●○', 79: '●│●●●│○○○○',
+      81: '●│●●○│○○○○', 83: '●│●○○│○○○○', 84: '●│○●○│○○○○', 86: '○│○●○│○○○○', 88: '◐│●●●│●●○○', 89: '◐│●●●│●○●○', 91: '◐│●●●│○○○○', 93: '◐│●●○│○○○○' };
+    return F[m] ? `운지 ${F[m]}` : '반음 운지는 선생님 운지표를 참고하세요';
+  }
+  return '';
+}
+function drawKbd(svg, m) {
+  const start = Math.floor(m / 12) * 12 - (m % 12 < 5 ? 12 : 0);    // 두 옥타브 표시
+  const whites = [0, 2, 4, 5, 7, 9, 11], W = 280 / 14;
+  let h = '';
+  for (let o = 0; o < 2; o++) whites.forEach((pc, i) => {
+    const k = start + o * 12 + pc, x = (o * 7 + i) * W;
+    h += `<rect x="${x + 0.5}" y="0.5" width="${W - 1}" height="69" rx="3" fill="${k === m ? 'var(--accent)' : '#f3ece6'}" stroke="#14110f"/>`;
+    if (pc === 0) h += `<text x="${x + W / 2}" y="63" font-size="8" text-anchor="middle" fill="#7a6a5e">${letter(k)}</text>`;
+  });
+  for (let o = 0; o < 2; o++) [1, 3, 6, 8, 10].forEach(pc => {
+    const k = start + o * 12 + pc, idx = { 1: 1, 3: 2, 6: 4, 8: 5, 10: 6 }[pc], x = (o * 7 + idx) * W - W * 0.3;
+    h += `<rect x="${x}" y="0" width="${W * 0.6}" height="42" rx="2" fill="${k === m ? 'var(--accent2)' : '#1f1a17'}"/>`;
+  });
+  svg.innerHTML = h;
+}
+function noteLoop() {
+  const st = noteState;
+  if (!st) return;
+  const t = audio.currentTime, N = st.notes;
+  let i = -1, lo = 0, hi = N.length - 1;
+  while (lo <= hi) { const mid = (lo + hi) >> 1; if (N[mid].t <= t) { i = mid; lo = mid + 1; } else hi = mid - 1; }
+  const active = i >= 0 && t < N[i].t + N[i].d + 0.08 ? i : -1;
+  const key = active >= 0 ? active : -1 - Math.max(i, -1) - 10;
+  if (key !== st.idx) {
+    st.els.forEach(e => e.classList.remove('on'));
+    if (active >= 0) {
+      const n = N[active], el = st.els[active];
+      el.classList.add('on');
+      st.big.textContent = solfa(n.m);
+      st.sub.textContent = `${octWord(n.m, st.ins)}${solfa(n.m)} · ${letter(n.m)}`;
+      st.pos.textContent = position(n.m, st.ins);
+      if (st.kbd) drawKbd(st.kbd, n.m);
+      const box = st.box; const top = el.offsetTop - box.offsetTop;
+      if (top < box.scrollTop || top > box.scrollTop + box.clientHeight - 30) box.scrollTo({ top: top - box.clientHeight / 3, behavior: 'smooth' });
+    } else {
+      st.big.textContent = audio.paused ? '♪' : '·';
+      st.sub.textContent = audio.paused ? '재생하면 지금 나오는 음을 보여 드려요' : '쉬는 부분';
+      st.pos.textContent = '';
+    }
+    const nx = N.slice(i + 1, i + 6);
+    st.next.textContent = nx.length ? '다음: ' + nx.map(n => solfa(n.m)).join(' ') : '';
+    st.idx = key;
+  }
+  requestAnimationFrame(noteLoop);
+}
+// 분석 (YIN 음높이 추적 → 음 단위로 묶기)
+let melodyJob = null;
+function showMelodyProgress() {
+  const p = $('#nProg'), st = $('#nStat'), go = $('#nGo');
+  if (!melodyJob) return;
+  if (p) { p.style.display = 'block'; $('#nBar').style.width = Math.round(melodyJob.p * 100) + '%'; }
+  if (st) st.textContent = melodyJob.msg;
+  if (go) go.style.display = 'none';
+}
+async function runMelody(s) {
+  if (melodyJob) return toast('다른 곡을 분석하는 중이에요');
+  if (!s.blob) return toast('이 곡의 파일이 없어요');
+  melodyJob = { id: s.id, p: 0, msg: '곡을 읽는 중…' }; showMelodyProgress();
+  const upd = (p, msg) => { melodyJob.p = p; if (msg) melodyJob.msg = msg; if (infoOpen && infoTab === 'notes' && infoSongId === s.id) showMelodyProgress(); };
+  try {
+    const SR = 8000;
+    const OAC = window.OfflineAudioContext || window.webkitOfflineAudioContext;
+    const raw = await new Promise(async (res, rej) => { const ab = await s.blob.arrayBuffer(); const c = new OAC(1, 1, SR); const pr = c.decodeAudioData(ab, res, rej); if (pr && pr.then) pr.then(res, rej); });
+    upd(0.08, '멜로디만 골라내는 중…');
+    const oc = new OAC(1, raw.length, SR), src = oc.createBufferSource(); src.buffer = raw;
+    const hp = oc.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 160;
+    const hp2 = oc.createBiquadFilter(); hp2.type = 'highpass'; hp2.frequency.value = 160;
+    const lp = oc.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 1400;
+    src.connect(hp); hp.connect(hp2); hp2.connect(lp); lp.connect(oc.destination); src.start();
+    const x = (await oc.startRendering()).getChannelData(0);
+    upd(0.12, '음높이를 찾는 중… 0%');
+    const W = 512, H = 160, tmin = Math.floor(SR / 1050), tmax = Math.ceil(SR / 75), dd = new Float32Array(tmax + 2);
+    const frames = []; let tk = performance.now();
+    for (let i = 0; i + W + tmax < x.length; i += H) {
+      let e = 0; for (let k = 0; k < W; k++) e += x[i + k] * x[i + k];
+      const rms = Math.sqrt(e / W);
+      let run = 0, best = -1;
+      for (let tau = 1; tau <= tmax + 1; tau++) {
+        let sum = 0; for (let k = 0; k < W; k++) { const v = x[i + k] - x[i + k + tau]; sum += v * v; }
+        run += sum; dd[tau] = run ? sum * tau / run : 1;
+      }
+      for (let tau = tmin; tau <= tmax; tau++) if (dd[tau] < 0.12) { while (tau < tmax && dd[tau + 1] < dd[tau]) tau++; best = tau; break; }
+      let f = 0;
+      if (best > 0) { const a = dd[best - 1], b = dd[best], c = dd[best + 1], den = a + c - 2 * b; f = SR / (best + (den ? (a - c) / (2 * den) : 0)); }
+      frames.push({ t: i / SR, f, rms });
+      if (performance.now() - tk > 40) { upd(0.12 + 0.83 * i / x.length, `음높이를 찾는 중… ${Math.round(i / x.length * 100)}%`); await new Promise(r => setTimeout(r, 0)); tk = performance.now(); }
+    }
+    upd(0.96, '음을 정리하는 중…');
+    const rs = frames.map(f => f.rms).filter(v => v > 0).sort((a, b) => a - b), gate = Math.max(0.004, (rs[Math.floor(rs.length * 0.35)] || 0) * 0.8);
+    const mid = frames.map(fr => fr.f > 0 && fr.rms > gate ? 69 + 12 * Math.log2(fr.f / 440) : null);
+    const sm = mid.map((v, i) => { if (v === null) return null; const w = []; for (let k = i - 2; k <= i + 2; k++) if (mid[k] != null) w.push(mid[k]); w.sort((a, b) => a - b); return w[w.length >> 1]; });
+    const hop = H / SR, notes = []; let cur = null;
+    sm.forEach((v, i) => {
+      const t = frames[i].t, m = v === null ? null : Math.round(v);
+      if (m !== null && (m < 45 || m > 90)) return;
+      if (m !== null && cur && m === cur.m && t - cur.e <= hop * 2.5) { cur.e = t + hop; return; }
+      if (cur && cur.e - cur.t >= 0.1) notes.push(cur);
+      cur = m === null ? null : { t, e: t + hop, m };
+    });
+    if (cur && cur.e - cur.t >= 0.1) notes.push(cur);
+    const merged = [];
+    for (const n of notes) { const L = merged[merged.length - 1]; if (L && L.m === n.m && n.t - L.e < 0.09) L.e = n.e; else merged.push({ ...n }); }
+    if (merged.length < 3) throw new Error('few');
+    s.melody = { v: 1, notes: merged.map(n => [+n.t.toFixed(3), +(n.e - n.t).toFixed(3), n.m]) };
+    await saveSong(s, true);
+    melodyJob = null;
+    toast(`계이름 ${merged.length}음을 찾았어요`);
+  } catch (e) {
+    melodyJob = null;
+    toast(e.message === 'few' ? '멜로디를 찾지 못했어요' : '분석하지 못했어요');
+  }
+  if (infoOpen && infoTab === 'notes' && infoSongId === s.id) infoSheet('notes');
+}
+
+/* ---------- AI 가사 받아쓰기 (Whisper, 기기 안에서 실행) ---------- */
+let aiJob = null, aiWorker = null;
+const AI_MODELS = { base: { id: 'Xenova/whisper-base', label: '빠르게', sub: '약 80MB 내려받기' }, small: { id: 'Xenova/whisper-small', label: '더 정확하게', sub: '약 250MB · 오래 걸려요' } };
+function aiLyricsSheet(s) {
+  if (aiJob) return aiProgressSheet();
+  const model = LS.get('aiModel', 'base'), lang = LS.get('aiLang', 'korean');
+  openSheet(`<p class="sheet-title" style="display:flex;align-items:center;gap:8px">${I_MIC.replace('class="ico-s"', 'class="ico-s" style="width:20px;height:20px;color:var(--accent2)"')} AI 가사 받아쓰기</p>
+    <p class="note" style="font-size:14px">AI가 노래를 듣고 가사를 시간과 함께 받아써요. 곡은 어디에도 올라가지 않고 이 기기 안에서 처리돼요.</p>
+    <div class="ai-opts">
+      <div><label>방식</label><div class="seg" id="aiM">${Object.entries(AI_MODELS).map(([k, v]) => `<button data-v="${k}" class="${k === model ? 'on' : ''}">${v.label}<br><span style="font-size:11px;font-weight:400">${v.sub}</span></button>`).join('')}</div></div>
+      <div><label>노래 언어</label><div class="seg" id="aiL">${[['korean', '한국어'], ['english', '영어'], ['japanese', '일본어'], ['auto', '자동']].map(([k, l]) => `<button data-v="${k}" class="${k === lang ? 'on' : ''}">${l}</button>`).join('')}</div></div>
+    </div>
+    <p class="note">처음 한 번은 AI 모델을 내려받아요(와이파이 권장). 그 뒤로는 인터넷 없이도 돼요. 반주가 크거나 발음이 빠르면 틀릴 수 있어요.</p>
+    <div class="sheet-btns"><button class="btn" id="aiNo">취소</button><button class="btn primary" id="aiGo">받아쓰기 시작</button></div>`, b => {
+    let m = model, l = lang;
+    b.querySelectorAll('#aiM [data-v]').forEach(x => x.onclick = () => { m = x.dataset.v; b.querySelectorAll('#aiM button').forEach(y => y.classList.toggle('on', y === x)); });
+    b.querySelectorAll('#aiL [data-v]').forEach(x => x.onclick = () => { l = x.dataset.v; b.querySelectorAll('#aiL button').forEach(y => y.classList.toggle('on', y === x)); });
+    b.querySelector('#aiNo').onclick = () => infoSheet('lyrics');
+    b.querySelector('#aiGo').onclick = () => { LS.set('aiModel', m); LS.set('aiLang', l); runAiLyrics(s, m, l); };
+  });
+}
+function aiProgressSheet() {
+  if (!aiJob) return;
+  openSheet(`<p class="sheet-title">AI 가사 받아쓰기 · ${esc(aiJob.name)}</p>
+    <div class="prog"><i id="aiBar" style="width:${Math.round(aiJob.p * 100)}%"></i></div><div class="vstat" id="aiStat">${esc(aiJob.msg)}</div>
+    <div class="lyrics" id="aiPart" style="max-height:30vh;text-align:left;font-size:14px;color:var(--muted);margin-top:10px">${esc(aiJob.partial || '')}</div>
+    <p class="note" style="margin-top:8px">앱을 열어 둔 채로 기다려 주세요. 창을 닫아도 계속 진행되고, 끝나면 알려 드려요.</p>
+    <div class="sheet-btns"><button class="btn" id="aiHide">닫기</button><button class="btn" id="aiStop" style="color:var(--danger)">중지</button></div>`, b => {
+    b.querySelector('#aiHide').onclick = closeSheet;
+    b.querySelector('#aiStop').onclick = () => { if (aiWorker) { aiWorker.terminate(); aiWorker = null; } aiJob = null; toast('받아쓰기를 중지했어요'); infoSheet('lyrics'); };
+  });
+}
+function aiUpd(p, msg, partial) {
+  if (!aiJob) return;
+  if (p != null) aiJob.p = p; if (msg) aiJob.msg = msg; if (partial != null) aiJob.partial = partial;
+  const bar = $('#aiBar'); if (bar) bar.style.width = Math.round(aiJob.p * 100) + '%';
+  const st = $('#aiStat'); if (st) st.textContent = aiJob.msg;
+  const pt = $('#aiPart'); if (pt && partial != null) { pt.textContent = partial; pt.scrollTop = pt.scrollHeight; }
+}
+async function runAiLyrics(s, modelKey, lang) {
+  if (!s.blob) return toast('이 곡의 파일이 없어요');
+  aiJob = { id: s.id, name: s.name, p: 0, msg: '곡을 준비하는 중…', partial: '' };
+  aiProgressSheet();
+  try {
+    const OAC = window.OfflineAudioContext || window.webkitOfflineAudioContext;
+    const buf = await new Promise(async (res, rej) => { const ab = await s.blob.arrayBuffer(); const c = new OAC(1, 1, 16000); const pr = c.decodeAudioData(ab, res, rej); if (pr && pr.then) pr.then(res, rej); });
+    const n = buf.length, mono = new Float32Array(n);
+    for (let c = 0; c < buf.numberOfChannels; c++) { const d = buf.getChannelData(c); for (let i = 0; i < n; i++) mono[i] += d[i] / buf.numberOfChannels; }
+    if (!aiJob) return;
+    if (!aiWorker) aiWorker = new Worker('lyrics-worker.js', { type: 'module' });
+    const result = await new Promise((res, rej) => {
+      aiWorker.onmessage = e => {
+        const d = e.data;
+        if (d.type === 'load') aiUpd(0.02 + d.p * 0.28, d.p < 1 ? `AI 모델 내려받는 중… ${Math.round(d.p * 100)}%` : 'AI 모델 준비 중…');
+        else if (d.type === 'asr') aiUpd(0.3 + d.p * 0.7, `노래 듣는 중… ${Math.round(d.p * 100)}%`, d.partial);
+        else if (d.type === 'done') res(d.lines);
+        else if (d.type === 'error') rej(new Error(d.message));
+      };
+      aiWorker.onerror = e => rej(new Error(e.message || 'worker'));
+      aiWorker.postMessage({ audio: mono, model: AI_MODELS[modelKey].id, language: lang === 'auto' ? null : lang }, [mono.buffer]);
+    });
+    if (!aiJob) return;
+    aiJob = null;
+    if (!result.length) { toast('가사를 알아듣지 못했어요'); if (infoOpen) infoSheet('lyrics'); return; }
+    const tag = t => `[${String(Math.floor(t / 60)).padStart(2, '0')}:${(t % 60).toFixed(2).padStart(5, '0')}]`;
+    const text = result.map(l => tag(l.t) + l.text).join('\n');
+    toast('가사를 받아썼어요. 확인 후 저장하세요');
+    if (curId !== s.id && songById(s.id)) { /* 다른 곡 재생 중이어도 편집기 열기 */ }
+    lyricsEditor(s, text);
+  } catch (e) {
+    aiJob = null;
+    if (aiWorker) { aiWorker.terminate(); aiWorker = null; }
+    toast('받아쓰지 못했어요: ' + (/fetch|network|Failed/i.test(e.message) ? '인터넷 연결을 확인해 주세요' : /memory|Memory|allocation/.test(e.message) ? '메모리가 부족해요 (빠르게 방식으로 해 보세요)' : e.message));
+    if (infoOpen) infoSheet('lyrics');
+  }
+}
+
 function syncLyrics(jump) {
   if (!lyrState) return;
   const t = audio.currentTime + 0.2, L = lyrState.lines;
@@ -863,9 +1164,11 @@ function syncLyrics(jump) {
 }
 audio.addEventListener('timeupdate', () => syncLyrics(false));
 audio.addEventListener('seeked', () => syncLyrics(true));
-function lyricsEditor(s) {
-  openSheet(`<p class="sheet-title">${s.lyrics ? '가사 수정' : '가사 쓰기'} · ${esc(s.name)}</p>
-    <textarea class="field lyr-edit" id="lyrIn" placeholder="가사를 입력하거나 붙여 넣으세요">${esc(s.lyrics || '')}</textarea>
+function lyricsEditor(s, draft) {
+  const isAi = typeof draft === 'string';
+  openSheet(`<p class="sheet-title">${isAi ? 'AI가 받아쓴 가사' : s.lyrics ? '가사 수정' : '가사 쓰기'} · ${esc(s.name)}</p>
+    ${isAi ? '<p class="note" style="margin:-4px 0 8px;color:var(--accent2)">AI가 듣고 쓴 가사라 틀린 곳이 있을 수 있어요. 고친 뒤 저장하세요.</p>' : ''}
+    <textarea class="field lyr-edit" id="lyrIn" placeholder="가사를 입력하거나 붙여 넣으세요">${esc(isAi ? draft : (s.lyrics || ''))}</textarea>
     <p class="note" style="margin-top:8px">줄 앞에 [01:23.45]처럼 시간을 넣으면 노래에 맞춰 가사가 따라가요.</p>
     <div class="sheet-btns"><button class="btn" id="lyNo">취소</button><button class="btn" id="lyTime">지금 시간 넣기</button><button class="btn primary" id="lyOk">저장</button></div>`, b => {
     const ta = b.querySelector('#lyrIn');
@@ -955,9 +1258,7 @@ async function loadAndPlay() {
   const s = songById(queue[order[pos]]);
   if (!s) return;
   if (!s.blob) {
-    toast('클라우드에서 곡을 받는 중이에요…');
-    try { await downloadSong(s); } catch { toast('곡을 받지 못했어요. 인터넷 연결을 확인해 주세요'); return; }
-    if (queue[order[pos]] !== s.id) return;
+    toast('이 곡의 파일이 없어요. 다시 추가해 주세요'); return;
   }
   if (curUrl) URL.revokeObjectURL(curUrl);
   curUrl = URL.createObjectURL(s.blob);
@@ -1266,18 +1567,9 @@ function profileSheet() {
   openSheet(`<p class="sheet-title">내 계정</p>
     <div class="profile"><div class="acct in">${esc(displayName(user).slice(0, 1).toUpperCase())}</div>
       <div class="info"><div class="name">${esc(displayName(user))}</div><div class="sub">${esc(user.email || '')}</div></div></div>
-    <p class="sheet-title" style="font-size:15px;margin-top:4px">구글 드라이브 동기화</p>
-    <div class="note" id="syncInfo" style="font-size:14px;line-height:1.7">${syncText()}</div>
-    <div class="sheet-btns">${!driveOn() ? '<button class="btn primary" id="dConn">구글 드라이브 연결</button>'
-      : `${tokenOk() ? '<button class="btn" id="dSync">지금 동기화</button>' : '<button class="btn primary" id="dConn">다시 연결</button>'}<button class="btn" id="dOff">연결 해제</button>`}</div>
+    <p class="note">곡과 플레이리스트는 이 기기에 저장돼요.</p>
     <div class="sheet-btns"><button class="btn" id="cx">닫기</button><button class="btn" style="color:var(--danger)" id="out">로그아웃</button></div>`, b => {
     b.querySelector('#cx').onclick = closeSheet;
-    const dc = b.querySelector('#dConn'); if (dc) dc.onclick = () => { LS.set('silentBlocked', false); driveConnect(false); };
-    const ds = b.querySelector('#dSync'); if (ds) ds.onclick = () => syncNow();
-    const dof = b.querySelector('#dOff'); if (dof) dof.onclick = async () => {
-      if (!await confirmBox('구글 드라이브 연결을 해제할까요? 이 기기의 곡과 드라이브에 저장된 곡은 그대로 남아요.', '해제')) return;
-      driveDisconnect(); toast('연결을 해제했어요');
-    };
     b.querySelector('#out').onclick = async () => { try { await window.FB.signOut(); closeSheet(); toast('로그아웃했어요'); } catch (e) { toast(authMsg(e)); } };
   });
 }
@@ -1323,242 +1615,15 @@ function loginSheet(mode) {
   });
 }
 
-/* ---------- 구글 드라이브 동기화 (앱 전용 숨김 폴더 appDataFolder) ---------- */
-const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.appdata';
-const DAPI = 'https://www.googleapis.com/drive/v3', UAPI = 'https://www.googleapis.com/upload/drive/v3';
-const REDIRECT = location.origin + location.pathname.replace(/index\.html$/, '');
+/* ---------- 저장 도우미 (이 기기에만 저장) ---------- */
 let localReadyResolve; const localReady = new Promise(r => localReadyResolve = r);
-let drv = LS.get('drive', null);           // { linked, token, exp, email }
-let cloudErr = '', syncBusy = false, syncAgain = false, syncTimer = null, lastSync = LS.get('lastSync', 0);
-const dlMap = new Map();
-const driveOn = () => !!(drv && drv.linked);
-const tokenOk = () => !!(drv && drv.token && Date.now() < drv.exp - 60000);
-const cloud = () => driveOn() && tokenOk();
-const mine = x => !!x.synced;
-const tombs = () => LS.get('tomb', { songs: {}, playlists: {} });
-function addTomb(kind, id) { const t = tombs(); t[kind][id] = Date.now(); LS.set('tomb', t); }
-const songMeta = s => ({ name: s.name, artist: s.artist || '', album: s.album || '', lyrics: s.lyrics || '', dur: s.dur || 0, size: s.size || 0,
-  file: s.file || '', added: s.added || Date.now(), renamed: !!s.renamed, hasArt: !!s.art || !!s.artId, updatedAt: s.updatedAt || 1, fileId: s.fileId || null, artId: s.artId || null });
-const plMeta = p => ({ name: p.name, songIds: p.songIds, created: p.created || Date.now(), updatedAt: p.updatedAt || 1 });
-
-// 로그인 (리디렉션 방식: 홈 화면 앱에서도 동작)
-function driveConnect(silent) {
-  if (!window.GOOGLE_CLIENT_ID) return toast('구글 드라이브 연결 설정이 아직 안 됐어요');
-  saveState();
-  const st = Math.random().toString(36).slice(2);
-  LS.set('oauthState', st);
-  if (silent) LS.set('lastSilent', Date.now());
-  const hint = (drv && drv.email) || (user && user.email) || '';
-  const q = { client_id: window.GOOGLE_CLIENT_ID, redirect_uri: REDIRECT, response_type: 'token', scope: DRIVE_SCOPE, include_granted_scopes: 'true', state: st };
-  if (silent) q.prompt = 'none';
-  if (hint) q.login_hint = hint;
-  location.href = 'https://accounts.google.com/o/oauth2/v2/auth?' + new URLSearchParams(q);
-}
-(function handleOAuthReturn() {
-  const h = location.hash;
-  if (!/access_token=|error=/.test(h)) return;
-  const q = new URLSearchParams(h.slice(1));
-  try { history.replaceState(null, '', location.pathname + location.search); } catch {}
-  if (!q.get('state') || q.get('state') !== LS.get('oauthState', '')) return;
-  LS.set('oauthState', '');
-  if (q.get('access_token')) {
-    drv = Object.assign(drv || {}, { linked: true, token: q.get('access_token'), exp: Date.now() + (+q.get('expires_in') || 3600) * 1000 });
-    LS.set('drive', drv); LS.set('silentBlocked', false);
-    window.__driveJustLinked = true;
-  } else {
-    const e = q.get('error');
-    if (drv) { drv.token = null; LS.set('drive', drv); }
-    if (/interaction_required|login_required|consent_required|account_selection_required/.test(e)) LS.set('silentBlocked', true);
-    else cloudErr = e === 'access_denied' ? '구글 드라이브 연결을 취소했어요' : '연결 오류: ' + e;
-  }
-})();
-function driveDisconnect() {
-  const t = drv && drv.token;
-  drv = null; LS.set('drive', null); LS.set('tomb', { songs: {}, playlists: {} });
-  if (t) fetch('https://oauth2.googleapis.com/revoke?token=' + encodeURIComponent(t), { method: 'POST' }).catch(() => {});
-  songs.forEach(x => { if (x.cloud && x.cloud !== 'done') x.cloud = x.blob ? undefined : 'remote'; });
-  refreshSyncInfo(); softRender();
-}
-async function gfetch(url, opt = {}) {
-  if (!tokenOk()) throw { code: 'token' };
-  const r = await fetch(url, Object.assign({}, opt, { headers: Object.assign({}, opt.headers || {}, { Authorization: 'Bearer ' + drv.token }) }));
-  if (r.status === 401) { drv.token = null; LS.set('drive', drv); throw { code: 'token' }; }
-  if (!r.ok) { let m = ''; try { m = (await r.json()).error.message; } catch {} throw { code: 'http' + r.status, message: m }; }
-  return r;
-}
-async function dFind(name) {
-  const r = await gfetch(`${DAPI}/files?spaces=appDataFolder&fields=files(id,name)&q=${encodeURIComponent(`name='${name}'`)}`);
-  return (await r.json()).files[0] || null;
-}
-async function dUpload(name, blob, id) {
-  const type = blob.type || 'application/octet-stream';
-  if (id) { await gfetch(`${UAPI}/files/${id}?uploadType=media&fields=id`, { method: 'PATCH', headers: { 'Content-Type': type }, body: blob }); return id; }
-  const r = await gfetch(`${UAPI}/files?uploadType=resumable&fields=id`, { method: 'POST',
-    headers: { 'Content-Type': 'application/json; charset=UTF-8', 'X-Upload-Content-Type': type, 'X-Upload-Content-Length': String(blob.size) },
-    body: JSON.stringify({ name, parents: ['appDataFolder'] }) });
-  const loc = r.headers.get('Location') || r.headers.get('location');
-  if (loc) {
-    const r2 = await fetch(loc, { method: 'PUT', headers: { 'Content-Type': type }, body: blob });
-    if (!r2.ok) throw { code: 'http' + r2.status, message: '업로드 실패' };
-    return (await r2.json()).id;
-  }
-  const bd = 'mp3p' + Math.random().toString(36).slice(2);
-  const body = new Blob([`--${bd}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify({ name, parents: ['appDataFolder'] })}\r\n--${bd}\r\nContent-Type: ${type}\r\n\r\n`, blob, `\r\n--${bd}--`]);
-  const r3 = await gfetch(`${UAPI}/files?uploadType=multipart&fields=id`, { method: 'POST', headers: { 'Content-Type': `multipart/related; boundary=${bd}` }, body });
-  return (await r3.json()).id;
-}
-const dDownload = async id => (await gfetch(`${DAPI}/files/${id}?alt=media`)).blob();
-const dDelete = id => id ? gfetch(`${DAPI}/files/${id}`, { method: 'DELETE' }).catch(() => {}) : null;
-async function writeLib(R, f) {
-  R.updatedAt = Date.now();
-  const id = await dUpload('library.json', new Blob([JSON.stringify(R)], { type: 'application/json' }), f && f.id);
-  return { id };
-}
-
-const CLOUD_ERR_TXT = e => e && e.code === 'token' ? '연결이 만료됐어요. 다시 연결해 주세요' :
-  e && e.code === 'http403' ? '권한이 없어요 (Drive API 사용 설정·테스트 사용자 확인)' : (e && (e.message || e.code)) || '동기화 오류';
-function syncText() {
-  if (!driveOn()) return '구글 드라이브를 연결하면 곡·플레이리스트·가사가 내 드라이브에 저장돼서, 다른 기기에서도 그대로 볼 수 있어요.';
-  const up = songs.filter(x => x.cloud === 'up' || (x.blob && !x.synced)).length,
-    down = songs.filter(x => !x.blob).length, n = songs.filter(x => x.synced).length;
-  const when = lastSync ? new Date(lastSync) : null;
-  return `${drv.email ? `<b>${esc(drv.email)}</b>의 드라이브` : '구글 드라이브'}에 <b>${n}곡</b>이 저장돼 있어요.` +
-    (up ? `<br>올릴 곡: ${up}곡` : '') + (down ? `<br>이 기기로 받을 곡: ${down}곡` : '') +
-    (syncBusy ? '<br>동기화하는 중…' : when ? `<br>마지막 동기화: ${when.getMonth() + 1}/${when.getDate()} ${String(when.getHours()).padStart(2, '0')}:${String(when.getMinutes()).padStart(2, '0')}` : '') +
-    (!tokenOk() ? '<br><span style="color:var(--accent2)">연결이 만료됐어요. 아래 <b>다시 연결</b>을 눌러 주세요.</span>' : '') +
-    (cloudErr && tokenOk() ? `<br><span style="color:var(--danger)">오류: ${esc(cloudErr)}</span>` : '');
-}
-function refreshSyncInfo() { const el = $('#syncInfo'); if (el) el.innerHTML = syncText(); }
 let renderT = null;
-function softRender() { clearTimeout(renderT); renderT = setTimeout(() => { render(); refreshSyncInfo(); }, 150); }
-function scheduleSync(ms = 2500) { if (!driveOn()) return; clearTimeout(syncTimer); syncTimer = setTimeout(syncNow, ms); }
-
-async function saveSong(s, quiet) { if (!quiet) s.updatedAt = Date.now(); await put('songs', s); if (!quiet) scheduleSync(); }
-async function savePl(p) { p.updatedAt = Date.now(); await put('playlists', p); scheduleSync(); }
-function cloudDeleteSong(s) { if (s.synced) { addTomb('songs', s.id); scheduleSync(); } }
-function cloudDeletePl(p) { addTomb('playlists', p.id); scheduleSync(); }
-function cloudQueueUpload(s) { s.updatedAt = s.updatedAt || Date.now(); scheduleSync(1000); }
-
-async function removeLocalSong(s) {
-  await del('songs', s.id).catch(() => {});
-  songs = songs.filter(x => x !== s);
-  if (curId === s.id) { audio.pause(); audio.removeAttribute('src'); curId = null; updateNow(); }
-}
-async function syncNow() {
-  if (!driveOn()) return;
-  if (!tokenOk()) { refreshSyncInfo(); return; }
-  if (syncBusy) { syncAgain = true; return; }
-  syncBusy = true; refreshSyncInfo();
-  let changedLocal = false;
-  try {
-    await localReady;
-    if (!drv.email) { try { const a = await (await gfetch(`${DAPI}/about?fields=user(emailAddress)`)).json(); drv.email = a.user.emailAddress; LS.set('drive', drv); } catch {} }
-    let libFile = await dFind('library.json');
-    let R = { v: 1, songs: {}, playlists: {}, tomb: { songs: {}, playlists: {} } };
-    if (libFile) { try { R = Object.assign(R, await (await gfetch(`${DAPI}/files/${libFile.id}?alt=media`)).json()); } catch {} }
-    R.tomb = R.tomb || {}; R.tomb.songs = R.tomb.songs || {}; R.tomb.playlists = R.tomb.playlists || {};
-    let dirty = !libFile;
-    // 1) 이 기기에서 지운 것 → 드라이브에서도 지우기
-    const T = tombs();
-    for (const [id, ts] of Object.entries(T.songs)) { const m = R.songs[id]; if (m) { dDelete(m.fileId); dDelete(m.artId); delete R.songs[id]; } R.tomb.songs[id] = Math.max(ts, R.tomb.songs[id] || 0); dirty = true; }
-    for (const [id, ts] of Object.entries(T.playlists)) { delete R.playlists[id]; R.tomb.playlists[id] = Math.max(ts, R.tomb.playlists[id] || 0); dirty = true; }
-    // 2) 다른 기기에서 지운 것 → 이 기기에서도 지우기
-    for (const [id, ts] of Object.entries(R.tomb.songs)) { const s = songById(id); if (s && s.synced && (s.updatedAt || 0) <= ts) { await removeLocalSong(s); changedLocal = true; } }
-    for (const [id, ts] of Object.entries(R.tomb.playlists)) { const p = plById(id); if (p && (p.updatedAt || 0) <= ts) { await del('playlists', id).catch(() => {}); playlists = playlists.filter(x => x !== p); if (openPl === id) openPl = null; changedLocal = true; } }
-    // 3) 곡 정보 맞추기
-    for (const [id, m] of Object.entries(R.songs)) {
-      const s = songById(id);
-      if (!s) {
-        const st = { id, name: m.name, dur: m.dur, size: m.size, file: m.file, added: m.added, renamed: m.renamed, hasArt: m.hasArt, updatedAt: m.updatedAt,
-          fileId: m.fileId, artId: m.artId, synced: true, cloud: 'remote', blob: null, v2: true, v3: true };
-        for (const k of ['artist', 'album', 'lyrics']) if (m[k]) st[k] = m[k];
-        songs.push(st); await put('songs', st).catch(() => {}); changedLocal = true;
-      } else if ((m.updatedAt || 0) > (s.updatedAt || 0)) {
-        for (const k of ['name', 'artist', 'album', 'lyrics']) { if (m[k]) s[k] = m[k]; else if (k !== 'name') delete s[k]; }
-        Object.assign(s, { renamed: m.renamed, updatedAt: m.updatedAt, fileId: m.fileId, artId: m.artId, hasArt: m.hasArt, synced: true });
-        await put('songs', s).catch(() => {}); changedLocal = true;
-        if (s.id === curId) updateNow();
-      } else {
-        if (!s.synced || !s.fileId) { s.synced = true; s.fileId = s.fileId || m.fileId; s.artId = s.artId || m.artId; await put('songs', s).catch(() => {}); }
-        if ((s.updatedAt || 0) > (m.updatedAt || 0)) { R.songs[id] = songMeta(s); dirty = true; }
-      }
-    }
-    // 4) 플레이리스트 맞추기
-    for (const [id, m] of Object.entries(R.playlists)) {
-      const p = plById(id);
-      if (!p) { const pl = { id, name: m.name, songIds: m.songIds || [], created: m.created, updatedAt: m.updatedAt }; playlists.push(pl); await put('playlists', pl).catch(() => {}); changedLocal = true; }
-      else if ((m.updatedAt || 0) > (p.updatedAt || 0)) { p.name = m.name; p.songIds = m.songIds || []; p.updatedAt = m.updatedAt; await put('playlists', p).catch(() => {}); changedLocal = true; if (queueSrc === id) syncQueue(p.songIds); }
-      else if ((p.updatedAt || 0) > (m.updatedAt || 0)) { R.playlists[id] = plMeta(p); dirty = true; }
-    }
-    for (const p of playlists) if (!R.playlists[p.id] && !R.tomb.playlists[p.id]) { p.updatedAt = p.updatedAt || Date.now(); R.playlists[p.id] = plMeta(p); dirty = true; }
-    if (changedLocal) { songs.sort((a, b) => (a.added || 0) - (b.added || 0)); playlists.sort((a, b) => (a.created || 0) - (b.created || 0)); render(); }
-    if (dirty) libFile = await writeLib(R, libFile);
-    // 처리한 삭제 기록 정리
-    const T2 = tombs(); Object.keys(T.songs).forEach(k => delete T2.songs[k]); Object.keys(T.playlists).forEach(k => delete T2.playlists[k]); LS.set('tomb', T2);
-    // 5) 이 기기에만 있는 곡 올리기 (한 곡씩, 올릴 때마다 목록 저장)
-    for (const s of songs.filter(x => x.blob && !R.songs[x.id] && !R.tomb.songs[x.id])) {
-      if (!songById(s.id)) continue;
-      s.cloud = 'up'; softRender();
-      try {
-        s.fileId = await dUpload(`${s.id}.mp3`, s.blob);
-        if (s.art) s.artId = await dUpload(`${s.id}.jpg`, s.art);
-        if (!songById(s.id)) { dDelete(s.fileId); dDelete(s.artId); continue; }
-        s.synced = true; s.cloud = 'done'; s.updatedAt = s.updatedAt || Date.now();
-        R.songs[s.id] = songMeta(s);
-        libFile = await writeLib(R, libFile);
-      } catch (e) { s.cloud = 'err'; throw e; }
-      finally { await put('songs', s).catch(() => {}); softRender(); }
-    }
-    lastSync = Date.now(); LS.set('lastSync', lastSync); cloudErr = '';
-    startDownloads();
-  } catch (e) { cloudErr = CLOUD_ERR_TXT(e); }
-  finally {
-    syncBusy = false; refreshSyncInfo(); softRender();
-    if (changedLocal && infoOpen && songById(infoSongId)) infoSheet();
-    if (syncAgain) { syncAgain = false; setTimeout(syncNow, 500); }
-  }
-}
-// 드라이브에서 곡 받기
-function downloadSong(s) {
-  if (s.blob) return Promise.resolve(s);
-  if (dlMap.has(s.id)) return dlMap.get(s.id);
-  if (!cloud() || !s.fileId) { if (driveOn() && !tokenOk()) toast('구글 드라이브 연결이 만료됐어요. 계정 버튼에서 다시 연결해 주세요'); return Promise.reject(new Error('offline')); }
-  const job = (async () => {
-    s.cloud = 'down'; softRender();
-    try {
-      const b = await dDownload(s.fileId);
-      s.blob = b.type && b.type !== 'application/octet-stream' ? b : new Blob([b], { type: 'audio/mpeg' });
-      if (s.artId && !s.art) { try { const a = await dDownload(s.artId); s.art = a.type && a.type !== 'application/octet-stream' ? a : new Blob([a], { type: 'image/jpeg' }); } catch {} }
-      s.cloud = 'done'; await put('songs', s);
-      return s;
-    } catch (e) { s.cloud = 'remote'; cloudErr = CLOUD_ERR_TXT(e); throw e; }
-    finally { dlMap.delete(s.id); softRender(); if (s.id === curId) updateNow(); }
-  })();
-  dlMap.set(s.id, job);
-  return job;
-}
-let dlPumping = false;
-async function startDownloads() {
-  if (dlPumping) return; dlPumping = true;
-  try { for (const s of songs.filter(x => !x.blob && x.fileId)) { if (!cloud()) break; try { await downloadSong(s); } catch {} } }
-  finally { dlPumping = false; }
-}
-// 연결이 만료됐으면, 음악이 멈춰 있을 때 조용히 다시 연결 (10분에 한 번까지)
-function maybeSilentReconnect() {
-  if (!driveOn() || tokenOk() || !navigator.onLine || !audio.paused || LS.get('silentBlocked', false)) return false;
-  if (Date.now() - LS.get('lastSilent', 0) < 10 * 60000) return false;
-  driveConnect(true); return true;
-}
-async function startCloud() {
-  await localReady;
-  if (!driveOn()) return;
-  if (tokenOk()) syncNow(); else maybeSilentReconnect();
-}
-function stopCloud() { if (driveOn()) driveDisconnect(); }
-document.addEventListener('visibilitychange', () => { if (!document.hidden && driveOn()) { if (tokenOk()) syncNow(); else maybeSilentReconnect(); } });
-addEventListener('online', () => scheduleSync(500));
-setInterval(() => { if (!document.hidden && cloud()) syncNow(); }, 90000);
-localReady.then(() => { if (window.__driveJustLinked) toast('구글 드라이브를 연결했어요. 동기화를 시작해요'); if (driveOn()) startCloud(); });
+function softRender() { clearTimeout(renderT); renderT = setTimeout(render, 150); }
+async function saveSong(s, quiet) { if (!quiet) s.updatedAt = Date.now(); await put('songs', s); }
+async function savePl(p) { p.updatedAt = Date.now(); await put('playlists', p); }
+function cloudDeleteSong() {} function cloudDeletePl() {} function cloudQueueUpload() {} function stopCloud() {}
+const cloud = () => null;
+const downloadSong = s => s.blob ? Promise.resolve(s) : Promise.reject(new Error('missing'));
 
 /* ---------- 재생 기록 저장 / 복원 ---------- */
 let restoring = false, lastSave = 0, pendingTime = null;
