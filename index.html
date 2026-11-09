@@ -92,8 +92,8 @@ main{padding:8px 14px}
 .notebig .nsub{font-size:13px;color:var(--muted);margin-top:4px;min-height:18px}
 .notebig .npos{font-size:15px;font-weight:700;margin-top:6px;min-height:20px}
 .notebig .nnext{font-size:13px;color:var(--muted);margin-top:8px;min-height:18px}
-.kbd{width:100%;max-width:400px;height:auto;margin:10px auto 0;display:block}
-.score{max-height:46vh;overflow-y:auto;overflow-x:hidden;touch-action:pan-y;background:var(--bg);border-radius:14px;padding:4px 6px;-webkit-overflow-scrolling:touch}
+.kbd{width:100%;max-width:330px;height:auto;margin:10px auto 0;display:block}
+.score{max-height:52vh;overflow-y:auto;overflow-x:hidden;touch-action:pan-y;background:var(--bg);border-radius:14px;padding:4px 6px;-webkit-overflow-scrolling:touch}
 .srow{display:block;width:100%;height:auto;border-bottom:1px dashed #2c2520}
 .srow:last-child{border-bottom:0}
 .srow .sl{stroke:#5b4d43;stroke-width:1.4}
@@ -896,8 +896,8 @@ function infoSheet(tabArg) {
         const els = [...b.querySelectorAll('.lline')];
         els.forEach(el => el.onclick = () => { audio.currentTime = lrc[+el.dataset.i].t; if (audio.paused) audio.play().catch(() => {}); });
         lyrState = { lines: lrc, els, idx: -1, box: b.querySelector('#lyrBox') };
-        syncLyrics(true);
-      }
+      } else if (b.querySelector('#lyrBox')) lyrState = { plain: true, box: b.querySelector('#lyrBox') };
+      if (lyrState) { holdOnTouch(lyrState.box, lyrState); requestAnimationFrame(lyricsLoop); }
     };
   } else if (infoTab === 'notes') {
     const ins = INSTR[instrument] || INSTR.piano;
@@ -923,8 +923,10 @@ function infoSheet(tabArg) {
         all.forEach(g => { groups[+g.dataset.i].push(g); g.onclick = () => { audio.currentTime = notes[+g.dataset.i].t; if (audio.paused) audio.play().catch(() => {}); }; });
         const els = groups.map(G => G[0]);
         const rowEls = [...b.querySelectorAll('.srow')], rowOf = els.map(e => rowEls.indexOf(e.closest('.srow')));
-        noteState = { notes, els, groups, idx: -2, past: 0, phRow: -1, phX: -1, rowEls, rowOf, xs: els.map(e => +e.dataset.x), phs: rowEls.map(r => r.querySelector('.ph')), ins, box: b.querySelector('#nSeq'), big: b.querySelector('#nBig'), sub: b.querySelector('#nSub'), pos: b.querySelector('#nPos'), next: b.querySelector('#nNext'), kbd: b.querySelector('#nKbd') };
+        const rowStart = rowEls.map((_, r) => { const k = rowOf.indexOf(r); return k >= 0 ? notes[k].t : Infinity; });
+        noteState = { notes, els, groups, rowStart, idx: -2, past: 0, phRow: -1, phX: -1, rowEls, rowOf, xs: els.map(e => +e.dataset.x), phs: rowEls.map(r => r.querySelector('.ph')), ins, box: b.querySelector('#nSeq'), big: b.querySelector('#nBig'), sub: b.querySelector('#nSub'), pos: b.querySelector('#nPos'), next: b.querySelector('#nNext'), kbd: b.querySelector('#nKbd') };
         b.querySelector('#nRe').onclick = () => { delete s.melody; saveSong(s, true); queueMelody(s, true); infoSheet('notes'); };
+        holdOnTouch(noteState.box, noteState);
         requestAnimationFrame(noteLoop);
       };
     }
@@ -1268,8 +1270,19 @@ function noteLoop() {
   if (row !== st.phRow) {
     if (st.phRow >= 0) st.phs[st.phRow].classList.remove('show');
     st.phs[row].classList.add('show'); st.phRow = row;
-    const box = st.box, rEl = st.rowEls[row];
-    box.scrollTo({ top: Math.max(0, rEl.offsetTop - box.offsetTop - 6), behavior: 'smooth' });
+  }
+  // 지금 줄을 맨 위에 두고, 줄 끝에 가까워지면 박자에 맞춰 다음 줄로 미끄러지듯 이동
+  if (Date.now() >= (st.hold || 0)) {
+    const box = st.box, bTop = box.getBoundingClientRect().top, rh = st.rowEls[row].getBoundingClientRect().height;
+    const anchor = Math.max(6, Math.min(box.clientHeight * 0.25, box.clientHeight - 2 * rh));   // 지금 줄 위에 앞줄이 조금 보이게
+    const top = r => st.rowEls[r].getBoundingClientRect().top - bTop + box.scrollTop - anchor;
+    let y = top(row);
+    if (row + 1 < st.rowEls.length && st.rowStart[row + 1] > st.rowStart[row]) {
+      const f = Math.min(1, Math.max(0, (t - st.rowStart[row]) / (st.rowStart[row + 1] - st.rowStart[row])));
+      y += (top(row + 1) - y) * smooth01(Math.max(0, (f - 0.8) / 0.2));
+    }
+    const target = Math.max(0, Math.min(box.scrollHeight - box.clientHeight, y)), dlt = target - box.scrollTop;
+    box.scrollTop += Math.abs(dlt) > box.clientHeight ? dlt : dlt * 0.18;
   }
   if (Math.abs(x - st.phX) > 0.4) { st.phs[row].setAttribute('x1', x); st.phs[row].setAttribute('x2', x); st.phX = x; }
   requestAnimationFrame(noteLoop);
@@ -1591,22 +1604,40 @@ function resumeLyrics(delay = 0) {
 }
 addEventListener('online', () => { aiNetWarned = false; resumeLyrics(); });
 
-function syncLyrics(jump) {
-  if (!lyrState) return;
-  const t = audio.currentTime + 0.2, L = lyrState.lines;
-  let i = -1; for (let k = 0; k < L.length; k++) { if (L[k].t <= t) i = k; else break; }
-  if (i === lyrState.idx) return;
-  if (lyrState.idx >= 0) lyrState.els[lyrState.idx]?.classList.remove('on');
-  lyrState.idx = i;
-  const el = lyrState.els[i];
-  if (el) {
-    el.classList.add('on');
-    const box = lyrState.box;
-    box.scrollTo({ top: el.offsetTop - box.offsetTop - box.clientHeight / 2 + el.clientHeight / 2, behavior: jump ? 'auto' : 'smooth' });
+// 손으로 넘기면 3초 동안은 자동으로 따라가지 않음
+function holdOnTouch(box, st) { ['touchstart', 'touchmove', 'wheel', 'pointerdown'].forEach(ev => box.addEventListener(ev, () => { st.hold = Date.now() + 3000; }, { passive: true })); }
+const smooth01 = f => f * f * (3 - 2 * f);
+// 가사: 지금 줄을 화면 40% 높이에 두고, 다음 줄이 다가오면 노래 시간에 맞춰 미끄러지듯 이동
+function lyricsLoop() {
+  const st = lyrState;
+  if (!st) return;
+  requestAnimationFrame(lyricsLoop);
+  const t = audio.currentTime + 0.15, box = st.box;
+  if (st.plain) {                                               // 시간이 없는 가사: 곡 진행에 맞춰 천천히 내려감
+    if (Date.now() < (st.hold || 0) || !audio.duration) return;
+    const target = (audio.currentTime / audio.duration) * (box.scrollHeight - box.clientHeight);
+    box.scrollTop += (target - box.scrollTop) * 0.08;
+    return;
   }
+  const L = st.lines;
+  let i = -1, lo = 0, hi = L.length - 1;
+  while (lo <= hi) { const mid = (lo + hi) >> 1; if (L[mid].t <= t) { i = mid; lo = mid + 1; } else hi = mid - 1; }
+  if (i !== st.idx) { if (st.idx >= 0) st.els[st.idx]?.classList.remove('on'); if (i >= 0) st.els[i]?.classList.add('on'); st.idx = i; }
+  if (Date.now() < (st.hold || 0)) return;
+  const mid = el => el.offsetTop - box.offsetTop + el.offsetHeight / 2;
+  let y = 0;
+  if (i >= 0) {
+    y = mid(st.els[i]);
+    if (i + 1 < L.length && L[i + 1].t > L[i].t) {
+      const f = Math.min(1, Math.max(0, (t - L[i].t) / (L[i + 1].t - L[i].t)));
+      y += (mid(st.els[i + 1]) - y) * smooth01(Math.max(0, (f - 0.6) / 0.4));
+    }
+    y -= box.clientHeight * 0.4;
+  }
+  const target = Math.max(0, Math.min(box.scrollHeight - box.clientHeight, y));
+  const dlt = target - box.scrollTop;
+  box.scrollTop += Math.abs(dlt) > box.clientHeight ? dlt : dlt * 0.18;   // 크게 건너뛰면 바로 이동
 }
-audio.addEventListener('timeupdate', () => syncLyrics(false));
-audio.addEventListener('seeked', () => syncLyrics(true));
 function lyricsEditor(s, draft) {
   const isAi = typeof draft === 'string';
   openSheet(`<p class="sheet-title">${isAi ? 'AI가 받아쓴 가사' : s.lyrics ? '가사 수정' : '가사 쓰기'} · ${esc(s.name)}</p>
