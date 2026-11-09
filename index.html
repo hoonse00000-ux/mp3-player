@@ -70,6 +70,10 @@ main{padding:8px 14px}
 .row.dragging{background:var(--panel2);position:relative;z-index:3;box-shadow:0 10px 28px rgba(0,0,0,.55);transition:none}
 .search{margin:0 0 8px;padding:11px 14px}
 .chip svg{width:14px;height:14px;fill:currentColor;vertical-align:-2px}
+.prog{height:8px;background:var(--line);border-radius:4px;overflow:hidden;margin:14px 0 8px}
+.prog i{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--accent),var(--accent2));transition:width .2s}
+.vstat{font-size:13px;color:var(--muted);min-height:18px}
+.act-item .ico-s{width:20px;height:20px;flex-shrink:0}
 .plcard{display:flex;align-items:center;gap:12px;padding:12px;border-radius:14px;background:var(--panel);margin-bottom:8px}
 .cover{width:48px;height:48px;border-radius:12px;background:linear-gradient(135deg,var(--accent),var(--accent2));display:grid;place-items:center;font-size:22px;color:#1a0d06;flex-shrink:0}
 .dethead{display:flex;align-items:center;gap:8px;margin:4px 0 6px}
@@ -158,6 +162,7 @@ input[type=range]::-moz-range-thumb{width:16px;height:16px;border-radius:50%;bac
 <main id="main"></main>
 
 <input type="file" id="fileIn" accept="audio/mpeg,audio/mp3,.mp3,audio/*" multiple hidden>
+<input type="file" id="videoIn" accept="video/*,.mp4,.mov,.m4v,.webm,.mkv" multiple hidden>
 <audio id="audio" preload="metadata"></audio>
 
 <section id="player">
@@ -189,7 +194,7 @@ input[type=range]::-moz-range-thumb{width:16px;height:16px;border-radius:50%;bac
 <div id="mask"></div>
 <div id="sheet"><div class="grab"></div><div id="sheetBody"></div></div>
 <div id="toast"></div>
-<div id="drop">여기에 MP3를 놓으세요 🎵</div>
+<div id="drop">여기에 MP3를 놓으세요</div>
 
 <script>
 // Firebase 설정 (웹에 공개돼도 괜찮은 값이에요. 보안은 Firebase 콘솔의 규칙과 승인된 도메인으로 지켜요.)
@@ -210,6 +215,13 @@ const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>'
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 const fmt = t => { if (!isFinite(t)) return '0:00'; t = Math.floor(t); return Math.floor(t/60) + ':' + String(t%60).padStart(2,'0'); };
 const SHUF = '<svg class="ico-s" viewBox="0 0 24 24"><path d="M3 7h2.5c4.5 0 6.5 10 11 10H20"/><path d="M3 17h2.5c1.8 0 3.1-1.6 4.3-3.6"/><path d="M13.7 10.6C14.9 8.6 16.2 7 18 7h2"/><path d="M17.3 4.3 20 7l-2.7 2.7"/><path d="M17.3 14.3 20 17l-2.7 2.7"/></svg>';
+const ICO = d => `<svg class="ico-s" viewBox="0 0 24 24">${d}</svg>`;
+const I_EDIT = ICO('<path d="M4 20h4L19 9a2.8 2.8 0 0 0-4-4L4 16z"/><path d="M13.5 6.5l4 4"/>');
+const I_ADD = ICO('<rect x="3.5" y="3.5" width="17" height="17" rx="4"/><path d="M12 8v8M8 12h8"/>');
+const I_REM = ICO('<rect x="3.5" y="3.5" width="17" height="17" rx="4"/><path d="M8 12h8"/>');
+const I_SAVE = ICO('<path d="M12 4v11M7.5 10.5 12 15l4.5-4.5"/><path d="M4.5 16v2.5A1.5 1.5 0 0 0 6 20h12a1.5 1.5 0 0 0 1.5-1.5V16"/>');
+const I_DEL = ICO('<path d="M4.5 7h15M10 4h4M6.5 7l1 12.5A1.5 1.5 0 0 0 9 21h6a1.5 1.5 0 0 0 1.5-1.5L17.5 7M10 11v6M14 11v6"/>');
+const FILM = '<svg class="ico-s" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2.5"/><path d="M7.5 5v14M16.5 5v14M3 9.7h4.5M3 14.3h4.5M16.5 9.7H21M16.5 14.3H21"/></svg>';
 const fmtSize = b => b >= 1048576 ? (b / 1048576).toFixed(1) + 'MB' : Math.max(1, Math.round(b / 1024)) + 'KB';
 
 /* ---------- 저장소 (IndexedDB, 실패 시 메모리) ---------- */
@@ -434,6 +446,114 @@ async function upgradeOldSongs() {
   if (old.length) toast(`${old.length}곡의 정보를 정리했어요`);
 }
 
+/* ---------- 영상에서 음원 추출 → MP3 ---------- */
+$('#videoIn').onchange = e => { const fs = [...e.target.files]; e.target.value = ''; if (fs.length) convertVideos(fs); };
+let lameLoading = null;
+function loadLame() {
+  if (window.lamejs) return Promise.resolve();
+  if (!lameLoading) lameLoading = new Promise((res, rej) => {
+    const sc = document.createElement('script'); sc.src = 'lame.min.js';
+    sc.onload = res; sc.onerror = () => { lameLoading = null; rej(new Error('lame')); };
+    document.head.appendChild(sc);
+  });
+  return lameLoading;
+}
+function decodeAudio(ab) {
+  const OAC = window.OfflineAudioContext || window.webkitOfflineAudioContext;
+  const oc = new OAC(2, 44100, 44100);
+  return new Promise((res, rej) => { const p = oc.decodeAudioData(ab, res, rej); if (p && p.then) p.then(res, rej); });
+}
+async function encodeMp3(buf, onP) {
+  await loadLame();
+  const ch = Math.min(2, buf.numberOfChannels), enc = new lamejs.Mp3Encoder(ch, buf.sampleRate, 192);
+  const L = buf.getChannelData(0), R = ch > 1 ? buf.getChannelData(1) : null, n = L.length, BS = 1152 * 8, out = [];
+  const i16 = (f, s, len) => { const o = new Int16Array(len); for (let i = 0; i < len; i++) { let v = f[s + i]; v = v < -1 ? -1 : v > 1 ? 1 : v; o[i] = v < 0 ? v * 0x8000 : v * 0x7fff; } return o; };
+  let t = performance.now();
+  for (let i = 0; i < n; i += BS) {
+    const len = Math.min(BS, n - i);
+    const b = R ? enc.encodeBuffer(i16(L, i, len), i16(R, i, len)) : enc.encodeBuffer(i16(L, i, len));
+    if (b.length) out.push(new Uint8Array(b));
+    if (performance.now() - t > 40) { onP(i / n); await new Promise(r => setTimeout(r, 0)); t = performance.now(); }
+  }
+  const f = enc.flush(); if (f.length) out.push(new Uint8Array(f));
+  onP(1);
+  return new Blob(out, { type: 'audio/mpeg' });
+}
+// 영상 한 장면을 앨범 사진으로
+function grabFrame(file) {
+  return new Promise(res => {
+    const v = document.createElement('video'), u = URL.createObjectURL(file);
+    let done = false;
+    const end = b => { if (done) return; done = true; clearTimeout(t); URL.revokeObjectURL(u); v.removeAttribute('src'); try { v.load(); } catch {} res(b); };
+    const t = setTimeout(() => end(null), 7000);
+    v.muted = true; v.playsInline = true; v.setAttribute('playsinline', ''); v.preload = 'auto';
+    v.onloadedmetadata = () => { try { v.currentTime = Math.min(isFinite(v.duration) ? v.duration * 0.15 : 1, 20); } catch { end(null); } };
+    v.onseeked = () => {
+      try {
+        const w = v.videoWidth, h = v.videoHeight; if (!w || !h) return end(null);
+        const side = Math.min(w, h), c = document.createElement('canvas'); c.width = c.height = 512;
+        c.getContext('2d').drawImage(v, (w - side) / 2, (h - side) / 2, side, side, 0, 0, 512, 512);
+        c.toBlob(b => end(b), 'image/jpeg', 0.85);
+      } catch { end(null); }
+    };
+    v.onerror = () => end(null);
+    v.src = u;
+  });
+}
+async function convertVideos(files) {
+  let ok = 0, lastId = null;
+  openSheet(`<p class="sheet-title" style="display:flex;align-items:center;gap:8px">${FILM.replace('class="ico-s"', 'class="ico-s" style="width:20px;height:20px;color:var(--accent2)"')} 영상에서 음원 추출</p>
+    <div class="name" id="vName"></div><div class="prog"><i id="vBar"></i></div><div class="vstat" id="vStat">준비 중…</div>
+    <p class="note" style="margin-top:12px">변환하는 동안 앱을 열어 두세요. 영상은 어디에도 올라가지 않고 이 기기 안에서만 처리돼요.</p>
+    <div class="sheet-btns" id="vBtns" style="display:none"><button class="btn" id="vClose">닫기</button><button class="btn primary" id="vPlay">바로 듣기</button></div>`);
+  const ui = (k, v) => { const el = $('#' + k); if (!el) return; if (k === 'vBar') el.style.width = Math.round(v * 100) + '%'; else el.textContent = v; };
+  const errs = [];
+  for (let fi = 0; fi < files.length; fi++) {
+    const f = files[fi], tag = files.length > 1 ? ` (${fi + 1}/${files.length})` : '';
+    ui('vName', f.name + tag); ui('vBar', 0);
+    try {
+      if (f.size > 1.5 * 1024 ** 3) throw new Error('big');
+      ui('vStat', '영상 읽는 중…');
+      const ab = await f.arrayBuffer();
+      ui('vStat', '소리 꺼내는 중…'); ui('vBar', 0.05);
+      let buf;
+      try { buf = await decodeAudio(ab); } catch { throw new Error('decode'); }
+      if (!buf || !buf.length) throw new Error('decode');
+      const art = await grabFrame(f);
+      ui('vStat', 'MP3로 바꾸는 중… 0%');
+      const mp3 = await encodeMp3(buf, p => { ui('vBar', 0.1 + p * 0.9); ui('vStat', `MP3로 바꾸는 중… ${Math.round(p * 100)}%`); });
+      const base = f.name.replace(/\.[^.]+$/, '');
+      const s = { id: uid(), name: cleanName(base), file: base + '.mp3', blob: mp3, size: mp3.size, added: Date.now(), dur: buf.duration, v2: true, fromVideo: true };
+      if (art) s.art = art;
+      try { await put('songs', s); } catch (err) { db = null; await put('songs', s); }
+      songs.push(s); ok++; lastId = s.id;
+      render();
+    } catch (e) {
+      const why = e.message === 'big' ? '영상이 너무 커요 (1.5GB 이하만 가능)' : e.message === 'decode' ? '소리가 없거나 지원하지 않는 형식이에요' : e.message === 'lame' ? '변환 도구를 불러오지 못했어요 (인터넷 확인)' : '메모리가 부족하거나 처리 중 오류가 났어요';
+      errs.push(`${f.name}: ${why}`);
+    }
+  }
+  ui('vBar', 1);
+  ui('vStat', ok ? `${ok}곡을 MP3로 바꿔 전체 곡에 추가했어요${errs.length ? ` · 실패 ${errs.length}개` : ''}` : '변환하지 못했어요');
+  if (errs.length) { const st = $('#vStat'); if (st) st.insertAdjacentHTML('afterend', `<p class="err">${errs.map(esc).join('<br>')}</p>`); }
+  const btns = $('#vBtns');
+  if (btns) {
+    btns.style.display = 'flex';
+    $('#vClose').onclick = closeSheet;
+    if (lastId) $('#vPlay').onclick = () => { closeSheet(); tab = 'library'; openPl = null; libQuery = ''; document.querySelectorAll('.tab').forEach(x => x.classList.toggle('on', x.dataset.tab === 'library')); playList(songs.map(x => x.id), songs.findIndex(x => x.id === lastId), 'lib'); };
+    else $('#vPlay').style.display = 'none';
+  }
+  if (ok) toast(`${ok}곡을 추가했어요`);
+}
+function saveMp3(s) {
+  try {
+    const a = document.createElement('a'), u = URL.createObjectURL(s.blob);
+    a.href = u; a.download = (s.name || 'music').replace(/[\\/:*?"<>|]/g, '_') + '.mp3';
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(u), 60000);
+  } catch { toast('저장하지 못했어요'); }
+}
+
 /* ---------- 화면 그리기 ---------- */
 document.querySelectorAll('.tab').forEach(b => b.onclick = () => {
   tab = b.dataset.tab; openPl = null; saveState();
@@ -498,10 +618,12 @@ function render() {
     const list = q ? songs.filter(s => [s.name, s.artist, s.album].join(' ').toLowerCase().includes(q)) : songs;
     m.innerHTML = warn + `<div class="toolbar">
         <button class="btn primary" id="addBtn">＋ MP3 추가</button>
+        <button class="btn" id="vidBtn">${FILM} 영상에서 추가</button>
         ${list.length ? `<button class="btn" id="playAll">▶ 전체 재생</button><button class="btn" id="shufAll">${SHUF} 셔플 재생</button>` : ''}
       </div>` + (songs.length ? `<input class="field search" id="q" type="search" placeholder="곡 · 가수 · 앨범 검색" value="${esc(libQuery)}" autocomplete="off">` + (list.length ? `<div id="songList">${list.map((s, i) => songRow(s, i, 'lib')).join('')}</div>` : '<div class="empty">검색 결과가 없어요.</div>')
-      : `<div class="empty">아직 저장된 곡이 없어요.<br><b>＋ MP3 추가</b>를 눌러 휴대폰이나 컴퓨터의<br>MP3 파일을 불러오세요.</div>`);
+      : `<div class="empty">아직 저장된 곡이 없어요.<br><b>＋ MP3 추가</b>로 MP3 파일을 불러오거나,<br><b>영상에서 추가</b>로 영상의 소리만 뽑아 넣으세요.</div>`);
     $('#addBtn').onclick = () => $('#fileIn').click();
+    $('#vidBtn').onclick = () => $('#videoIn').click();
     if ($('#q')) $('#q').oninput = e => { libQuery = e.target.value; render(); };
     if (list.length) {
       $('#playAll').onclick = () => { setShuffle(false); playList(list.map(s => s.id), 0, 'lib'); };
@@ -561,10 +683,11 @@ function render() {
 function songMenu(s) {
   const inPl = tab === 'playlists' && openPl ? plById(openPl) : null;
   openSheet(`<p class="sheet-title">${esc(s.name)}</p>
-    <button class="act-item" data-a="rename">✏️ 이름 바꾸기</button>
-    <button class="act-item" data-a="addpl">➕ 플레이리스트에 담기</button>
-    ${inPl ? `<button class="act-item" data-a="rmpl">➖ 이 플레이리스트에서 빼기</button>` : ''}
-    <button class="act-item danger" data-a="del">🗑 곡 삭제</button>`, b => {
+    <button class="act-item" data-a="rename">${I_EDIT} 이름 바꾸기</button>
+    <button class="act-item" data-a="addpl">${I_ADD} 플레이리스트에 담기</button>
+    ${inPl ? `<button class="act-item" data-a="rmpl">${I_REM} 이 플레이리스트에서 빼기</button>` : ''}
+    <button class="act-item" data-a="save">${I_SAVE} MP3 파일로 저장</button>
+    <button class="act-item danger" data-a="del">${I_DEL} 곡 삭제</button>`, b => {
     b.querySelectorAll('[data-a]').forEach(x => x.onclick = async () => {
       const a = x.dataset.a; closeSheet();
       await new Promise(r => setTimeout(r, 230));
@@ -575,6 +698,8 @@ function songMenu(s) {
         inPl.songIds = inPl.songIds.filter(id => id !== s.id); await put('playlists', inPl);
         if (queueSrc === inPl.id) syncQueue(inPl.songIds);
         render(); toast('플레이리스트에서 뺐어요');
+      } else if (a === 'save') {
+        saveMp3(s);
       } else if (a === 'del') {
         if (!await confirmBox(`'${s.name}'을(를) 삭제할까요? 모든 플레이리스트에서도 빠져요.`)) return;
         await del('songs', s.id);
@@ -679,8 +804,8 @@ function pickSongsFor(p) {
 }
 function plMenu(p) {
   openSheet(`<p class="sheet-title">${esc(p.name)}</p>
-    <button class="act-item" data-a="rename">✏️ 플레이리스트 이름 바꾸기</button>
-    <button class="act-item danger" data-a="del">🗑 플레이리스트 삭제</button>`, b => {
+    <button class="act-item" data-a="rename">${I_EDIT} 플레이리스트 이름 바꾸기</button>
+    <button class="act-item danger" data-a="del">${I_DEL} 플레이리스트 삭제</button>`, b => {
     b.querySelectorAll('[data-a]').forEach(x => x.onclick = async () => {
       closeSheet(); await new Promise(r => setTimeout(r, 230));
       if (x.dataset.a === 'rename') {
@@ -773,7 +898,7 @@ $('#nextBtn').onclick = () => next(false);
 $('#prevBtn').onclick = prev;
 $('#repeatBtn').onclick = () => {
   repeat = { all: 'one', one: 'off', off: 'all' }[repeat]; LS.set('repeat', repeat); saveState();
-  updateModes(); toast({ all: '🔁 순서대로 반복', one: '🔂 한 곡 반복', off: '반복 안 함' }[repeat]);
+  updateModes(); toast({ all: '순서대로 반복', one: '한 곡 반복', off: '반복 안 함' }[repeat]);
 };
 $('#shuffleBtn').onclick = () => { setShuffle(!shuffle); toast(shuffle ? '셔플 켜짐' : '셔플 꺼짐'); };
 function setShuffle(v) {
