@@ -84,7 +84,16 @@ main{padding:8px 14px}
 #player{position:fixed;left:0;right:0;bottom:0;z-index:10;background:rgba(31,26,23,.97);backdrop-filter:blur(12px);border-top:1px solid var(--line);padding:10px 16px 16px;border-radius:20px 20px 0 0}
 .ptop{display:flex;align-items:center;gap:10px;position:relative}
 #viz{position:absolute;inset:0;width:100%;height:100%;opacity:.35;pointer-events:none}
-.ptitle{flex:1;min-width:0;position:relative}
+.ptitle{flex:1;min-width:0;position:relative;cursor:pointer}
+.pthumb{cursor:pointer}
+.bigart{width:min(240px,62vw);aspect-ratio:1;margin:4px auto 16px;border-radius:18px;overflow:hidden;background:linear-gradient(135deg,var(--accent),var(--accent2));display:grid;place-items:center;font-size:72px;color:#1a0d06;box-shadow:0 14px 40px rgba(0,0,0,.5)}
+.bigart img{width:100%;height:100%;object-fit:cover;display:block}
+.it-title{text-align:center;font-size:20px;font-weight:900;margin:0 0 4px;word-break:keep-all}
+.it-artist{text-align:center;color:var(--accent2);font-size:15px;margin:0 0 16px}
+.it-table{width:100%;border-collapse:collapse;font-size:14px;margin-bottom:6px}
+.it-table td{padding:9px 2px;border-bottom:1px solid var(--line);vertical-align:top}
+.it-table td:first-child{color:var(--muted);width:92px;white-space:nowrap}
+.it-table td:last-child{word-break:break-all}
 .ptitle .name{font-size:16px;font-weight:700}
 .chip{position:relative;padding:6px 10px;border-radius:999px;background:var(--panel2);font-size:12px;font-weight:700;color:var(--accent2);border:1px solid var(--line)}
 .chip.on{background:var(--accent2);color:#1a0d06}
@@ -160,7 +169,7 @@ input[type=range]::-moz-range-thumb{width:16px;height:16px;border-radius:50%;bac
       <div class="sub" id="pSub">곡을 눌러 재생하세요</div>
     </div>
     <button class="chip" id="sleepBtn" aria-label="잠자기 타이머"><svg viewBox="0 0 24 24"><path d="M20.5 14.6A8.5 8.5 0 0 1 9.4 3.5a8.5 8.5 0 1 0 11.1 11.1z"/></svg><span id="sleepTxt"></span></button>
-    <button class="chip" id="remixBtn">🎛 리믹스</button>
+    <button class="chip" id="remixBtn"><svg class="mix" viewBox="0 0 24 24"><path d="M6 3v6.4M6 14.6V21M12 3v2.4M12 10.6V21M18 3v10.4M18 18.6V21" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/><circle cx="6" cy="12" r="2.6"/><circle cx="12" cy="8" r="2.6"/><circle cx="18" cy="16" r="2.6"/></svg> 리믹스</button>
   </div>
   <div class="seek">
     <span id="tCur">0:00</span>
@@ -201,7 +210,7 @@ const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>'
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 const fmt = t => { if (!isFinite(t)) return '0:00'; t = Math.floor(t); return Math.floor(t/60) + ':' + String(t%60).padStart(2,'0'); };
 const SHUF = '<svg class="ico-s" viewBox="0 0 24 24"><path d="M3 7h2.5c4.5 0 6.5 10 11 10H20"/><path d="M3 17h2.5c1.8 0 3.1-1.6 4.3-3.6"/><path d="M13.7 10.6C14.9 8.6 16.2 7 18 7h2"/><path d="M17.3 4.3 20 7l-2.7 2.7"/><path d="M17.3 14.3 20 17l-2.7 2.7"/></svg>';
-const fmtSize = b => (b/1048576).toFixed(1) + 'MB';
+const fmtSize = b => b >= 1048576 ? (b / 1048576).toFixed(1) + 'MB' : Math.max(1, Math.round(b / 1024)) + 'KB';
 
 /* ---------- 저장소 (IndexedDB, 실패 시 메모리) ---------- */
 let db = null;
@@ -560,8 +569,7 @@ function songMenu(s) {
       const a = x.dataset.a; closeSheet();
       await new Promise(r => setTimeout(r, 230));
       if (a === 'rename') {
-        const v = await askText('곡 이름 바꾸기', s.name);
-        if (v) { s.name = v; s.renamed = true; await put('songs', s); render(); updateNow(); toast('이름을 바꿨어요'); }
+        await renameSong(s);
       } else if (a === 'addpl') addToPlaylists(s);
       else if (a === 'rmpl') {
         inPl.songIds = inPl.songIds.filter(id => id !== s.id); await put('playlists', inPl);
@@ -608,6 +616,41 @@ function addToPlaylists(s) {
     };
   });
 }
+
+async function renameSong(s) {
+  const v = await askText('곡 이름 바꾸기', s.name);
+  if (v) { s.name = v; s.renamed = true; await put('songs', s); render(); updateNow(); toast('이름을 바꿨어요'); }
+  return v;
+}
+
+/* ---------- 재생 중인 곡 정보 ---------- */
+function infoSheet() {
+  const s = songById(curId);
+  if (!s) return toast('재생 중인 곡이 없어요');
+  const art = artUrl(s);
+  const srcName = queueSrc === 'lib' ? '전체 곡' : (plById(queueSrc)?.name || '');
+  const inPls = playlists.filter(p => p.songIds.includes(s.id)).map(p => p.name);
+  const d = new Date(s.added);
+  const rows = [
+    ['앨범', s.album],
+    ['길이', s.dur ? fmt(s.dur) : ''],
+    ['파일 크기', fmtSize(s.size)],
+    ['원본 파일', s.file],
+    ['추가한 날', isNaN(d) ? '' : `${d.getFullYear()}.${d.getMonth() + 1}.${d.getDate()}`],
+    ['재생 목록', srcName ? `${srcName} · ${pos + 1}/${order.length}` : ''],
+    ['담긴 곳', inPls.join(', ')]
+  ].filter(x => x[1]);
+  openSheet(`<div class="bigart">${art ? `<img src="${art}" alt="">` : '♪'}</div>
+    <p class="it-title">${esc(s.name)}</p>
+    <p class="it-artist">${esc(s.artist || '가수 정보 없음')}</p>
+    <table class="it-table">${rows.map(([k, v]) => `<tr><td>${k}</td><td>${esc(v)}</td></tr>`).join('')}</table>
+    <div class="sheet-btns"><button class="btn" id="iRen">이름 바꾸기</button><button class="btn" id="iPl">플레이리스트에 담기</button></div>`, b => {
+    b.querySelector('#iRen').onclick = async () => { closeSheet(); await new Promise(r => setTimeout(r, 230)); await renameSong(s); };
+    b.querySelector('#iPl').onclick = async () => { closeSheet(); await new Promise(r => setTimeout(r, 230)); addToPlaylists(s); };
+  });
+}
+$('#pArt').onclick = infoSheet;
+document.querySelector('.ptitle').onclick = infoSheet;
 
 /* ---------- 플레이리스트 ---------- */
 async function newPlaylist() {
@@ -890,7 +933,7 @@ $('#remixBtn').onclick = () => {
   const sl = (k, label, min, max, step, show) => `<div class="slider"><label>${label}<b id="v_${k}">${show(fx[k])}</b></label>
     <input type="range" data-k="${k}" min="${min}" max="${max}" step="${step}" value="${fx[k]}"></div>`;
   const showers = { speed: v => (+v).toFixed(2) + 'x', bass: v => '+' + (+v).toFixed(0) + 'dB', reverb: v => Math.round(v * 100) + '%', echo: v => Math.round(v * 100) + '%' };
-  openSheet(`<p class="sheet-title">🎛 리믹스</p>
+  openSheet(`<p class="sheet-title" style="display:flex;align-items:center;gap:8px"><svg class="mix" style="width:20px;height:20px;fill:var(--accent2)" viewBox="0 0 24 24"><path d="M6 3v6.4M6 14.6V21M12 3v2.4M12 10.6V21M18 3v10.4M18 18.6V21" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/><circle cx="6" cy="12" r="2.6"/><circle cx="12" cy="8" r="2.6"/><circle cx="18" cy="16" r="2.6"/></svg> 리믹스</p>
     <div class="presets">${Object.entries(PRESETS).map(([k, p]) => `<button class="preset ${fx.preset === k ? 'on' : ''}" data-p="${k}">${p.label}<small>${p.sub}</small></button>`).join('')}</div>
     ${sl('speed', '속도', 0.5, 1.5, 0.05, showers.speed)}
     <div class="toggle"><span>속도를 바꿔도 음높이 유지</span><input type="checkbox" id="kp" ${fx.keepPitch ? 'checked' : ''} style="width:22px;height:22px;accent-color:var(--accent)"></div>
