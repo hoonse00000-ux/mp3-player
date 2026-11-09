@@ -69,11 +69,20 @@ main{padding:8px 14px}
 .handle{width:28px;height:44px;margin-right:-4px;color:var(--muted);font-size:20px;touch-action:none;flex-shrink:0;cursor:grab}
 .row.dragging{background:var(--panel2);position:relative;z-index:3;box-shadow:0 10px 28px rgba(0,0,0,.55);transition:none}
 .search{margin:0 0 8px;padding:11px 14px}
-.chip svg{width:14px;height:14px;fill:currentColor;vertical-align:-2px}
+.chip svg{width:14px;height:14px;fill:currentColor;display:block;flex-shrink:0}
 .prog{height:8px;background:var(--line);border-radius:4px;overflow:hidden;margin:14px 0 8px}
 .prog i{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--accent),var(--accent2));transition:width .2s}
 .vstat{font-size:13px;color:var(--muted);min-height:18px}
 .act-item .ico-s{width:20px;height:20px;flex-shrink:0}
+.ihead{display:flex;align-items:center;gap:14px;margin:2px 0 14px}
+.ihead .thumb{width:64px;height:64px;border-radius:14px;font-size:26px;cursor:default}
+.ihead .it-title,.ihead .it-artist{text-align:left;margin:0}
+.ihead .it-title{font-size:18px}
+.lyrics{max-height:46vh;overflow:auto;text-align:center;font-size:16px;line-height:1.9;white-space:pre-wrap;word-break:keep-all;padding:6px 4px 10px;-webkit-overflow-scrolling:touch}
+.lline{padding:3px 6px;border-radius:8px;color:var(--muted);transition:color .25s,transform .25s;cursor:pointer}
+.lline.on{color:var(--text);font-weight:700;transform:scale(1.05)}
+.nolyr{text-align:center;color:var(--muted);padding:44px 0 30px;font-size:15px}
+.lyr-edit{min-height:44vh;resize:vertical;line-height:1.7;font-family:inherit}
 .plcard{display:flex;align-items:center;gap:12px;padding:12px;border-radius:14px;background:var(--panel);margin-bottom:8px}
 .cover{width:48px;height:48px;border-radius:12px;background:linear-gradient(135deg,var(--accent),var(--accent2));display:grid;place-items:center;font-size:22px;color:#1a0d06;flex-shrink:0}
 .dethead{display:flex;align-items:center;gap:8px;margin:4px 0 6px}
@@ -99,7 +108,7 @@ main{padding:8px 14px}
 .it-table td:first-child{color:var(--muted);width:92px;white-space:nowrap}
 .it-table td:last-child{word-break:break-all}
 .ptitle .name{font-size:16px;font-weight:700}
-.chip{position:relative;padding:6px 10px;border-radius:999px;background:var(--panel2);font-size:12px;font-weight:700;color:var(--accent2);border:1px solid var(--line)}
+.chip{position:relative;display:inline-flex;align-items:center;gap:4px;line-height:1;padding:7px 11px;border-radius:999px;background:var(--panel2);font-size:12px;font-weight:700;color:var(--accent2);border:1px solid var(--line)}
 .chip.on{background:var(--accent2);color:#1a0d06}
 .seek{display:flex;align-items:center;gap:8px;font-size:11px;color:var(--muted);margin:8px 0 4px;font-variant-numeric:tabular-nums}
 input[type=range]{-webkit-appearance:none;appearance:none;width:100%;height:4px;border-radius:4px;background:var(--line);outline:none}
@@ -292,12 +301,15 @@ const plById = id => playlists.find(p => p.id === id);
 let toastT;
 function toast(msg) { const t = $('#toast'); t.textContent = msg; t.classList.add('show'); clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove('show'), 1800); }
 let sheetClose = null;
+let infoOpen = false, infoTab = 'lyrics', infoSongId = null, lyrState = null;
 function openSheet(html, mount) {
+  infoOpen = false; lyrState = null;
   $('#sheetBody').innerHTML = html;
   $('#mask').classList.add('show'); $('#sheet').classList.add('show');
   if (mount) mount($('#sheetBody'));
 }
 function closeSheet() {
+  infoOpen = false; lyrState = null;
   $('#mask').classList.remove('show'); $('#sheet').classList.remove('show');
   if (sheetClose) { const f = sheetClose; sheetClose = null; f(); }
 }
@@ -377,6 +389,21 @@ function readPic(d, v2) {
   if (mime === 'image/jpg') mime = 'image/jpeg';
   return new Blob([d.slice(i)], { type: mime });
 }
+function readLyrics(d) {
+  const enc = d[0]; let i = 4; // 인코딩 1바이트 + 언어 3바이트
+  if (enc === 1 || enc === 2) { while (i + 1 < d.length && !(d[i] === 0 && d[i + 1] === 0)) i += 2; i += 2; }
+  else { while (i < d.length && d[i] !== 0) i++; i++; }
+  if (i >= d.length) return '';
+  const b = d.subarray(i);
+  try {
+    let t;
+    if (enc === 1) t = new TextDecoder('utf-16').decode(b);
+    else if (enc === 2) t = new TextDecoder('utf-16be').decode(b);
+    else if (enc === 3) t = new TextDecoder('utf-8').decode(b);
+    else { try { t = new TextDecoder('utf-8', { fatal: true }).decode(b); } catch { try { t = new TextDecoder('euc-kr').decode(b); } catch { t = new TextDecoder('latin1').decode(b); } } }
+    return t.replace(/\u0000/g, '').replace(/\r\n?/g, '\n').trim();
+  } catch { return ''; }
+}
 async function readTags(blob) {
   const out = {};
   try {
@@ -390,7 +417,7 @@ async function readTags(blob) {
       let p = 0;
       if (flags & 0x40) p = ver === 4 ? ss(b, 0) : u32(b, 0) + 4;
       const v2 = ver === 2, idLen = v2 ? 3 : 4, hdr = v2 ? 6 : 10;
-      const map = v2 ? { TT2: 'title', TP1: 'artist', TAL: 'album', PIC: 'art' } : { TIT2: 'title', TPE1: 'artist', TALB: 'album', APIC: 'art' };
+      const map = v2 ? { TT2: 'title', TP1: 'artist', TAL: 'album', PIC: 'art', ULT: 'lyrics' } : { TIT2: 'title', TPE1: 'artist', TALB: 'album', APIC: 'art', USLT: 'lyrics' };
       while (p + hdr <= b.length) {
         const id = String.fromCharCode(...b.subarray(p, p + idLen));
         if (!/^[A-Z0-9]+$/.test(id)) break;
@@ -398,6 +425,14 @@ async function readTags(blob) {
         if (fs <= 0 || p + hdr + fs > b.length) break;
         const key = map[id], d = b.subarray(p + hdr, p + hdr + fs);
         if (key === 'art') { if (!out.art) out.art = readPic(d, v2); }
+        else if (key === 'lyrics') { if (!out.lyrics) out.lyrics = readLyrics(d); }
+        else if (id === 'TXXX' || id === 'TXX') {   // 일부 프로그램은 가사를 TXXX(LYRICS)에 넣음
+          const enc = d[0]; let i = 1;
+          if (enc === 1 || enc === 2) { while (i + 1 < d.length && !(d[i] === 0 && d[i + 1] === 0)) i += 2; }
+          else { while (i < d.length && d[i] !== 0) i++; }
+          const desc = decodeText(d.subarray(1, i), enc);
+          if (/lyric|uslt/i.test(desc) && !out.lyrics) out.lyrics = readLyrics(new Uint8Array([enc, 0x58, 0x58, 0x58, ...d.subarray(1)]));
+        }
         else if (key && !out[key]) out[key] = decodeText(d.subarray(1), d[0]);
         p += hdr + fs;
       }
@@ -409,7 +444,7 @@ async function readTags(blob) {
       }
     }
   } catch (e) {}
-  for (const k of ['title', 'artist', 'album']) if (!out[k]) delete out[k];
+  for (const k of ['title', 'artist', 'album', 'lyrics']) if (!out[k]) delete out[k];
   if (!out.art) delete out.art;
   return out;
 }
@@ -430,12 +465,13 @@ async function enrich(s, isNew) {
   if (tags.artist) s.artist = tags.artist;
   if (tags.album) s.album = tags.album;
   if (tags.art) s.art = tags.art;
+  if (tags.lyrics && !s.lyrics) s.lyrics = tags.lyrics;
   if (!s.renamed) {
     if (isNew || s.file) s.name = tags.title || cleanName((s.file || s.name).replace(/\.[^.]+$/, ''));
     else s.name = cleanName(s.name);
   }
   if (!s.dur) s.dur = await getDuration(s.blob);
-  s.v2 = true;
+  s.v2 = true; s.v3 = true;
 }
 async function upgradeOldSongs() {
   const old = songs.filter(s => !s.v2);
@@ -444,6 +480,9 @@ async function upgradeOldSongs() {
     render(); if (s.id === curId) updateNow();
   }
   if (old.length) toast(`${old.length}곡의 정보를 정리했어요`);
+  for (const s of songs.filter(x => !x.v3)) {   // 이미 넣은 곡의 가사 읽기
+    try { const t = await readTags(s.blob); if (t.lyrics && !s.lyrics) s.lyrics = t.lyrics; s.v3 = true; await put('songs', s); } catch {}
+  }
 }
 
 /* ---------- 영상에서 음원 추출 → MP3 ---------- */
@@ -523,7 +562,7 @@ async function convertVideos(files) {
       ui('vStat', 'MP3로 바꾸는 중… 0%');
       const mp3 = await encodeMp3(buf, p => { ui('vBar', 0.1 + p * 0.9); ui('vStat', `MP3로 바꾸는 중… ${Math.round(p * 100)}%`); });
       const base = f.name.replace(/\.[^.]+$/, '');
-      const s = { id: uid(), name: cleanName(base), file: base + '.mp3', blob: mp3, size: mp3.size, added: Date.now(), dur: buf.duration, v2: true, fromVideo: true };
+      const s = { id: uid(), name: cleanName(base), file: base + '.mp3', blob: mp3, size: mp3.size, added: Date.now(), dur: buf.duration, v2: true, v3: true, fromVideo: true };
       if (art) s.art = art;
       try { await put('songs', s); } catch (err) { db = null; await put('songs', s); }
       songs.push(s); ok++; lastId = s.id;
@@ -749,29 +788,96 @@ async function renameSong(s) {
 }
 
 /* ---------- 재생 중인 곡 정보 ---------- */
-function infoSheet() {
+// 시간 가사([00:12.34] 형식) 읽기
+function parseLrc(t) {
+  const out = [], re = /\[(\d{1,3}):(\d{1,2}(?:[.:]\d{1,3})?)\]/g;
+  for (const raw of (t || '').split('\n')) {
+    const times = []; let m, last = 0; re.lastIndex = 0;
+    while ((m = re.exec(raw))) { times.push(+m[1] * 60 + parseFloat(m[2].replace(':', '.'))); last = re.lastIndex; }
+    if (times.length) { const text = raw.slice(last).trim(); times.forEach(tm => out.push({ t: tm, text })); }
+  }
+  out.sort((a, b) => a.t - b.t);
+  return out.length >= 3 ? out : null;
+}
+function infoSheet(tabArg) {
   const s = songById(curId);
   if (!s) return toast('재생 중인 곡이 없어요');
+  if (typeof tabArg === 'string') infoTab = tabArg;
   const art = artUrl(s);
-  const srcName = queueSrc === 'lib' ? '전체 곡' : (plById(queueSrc)?.name || '');
-  const inPls = playlists.filter(p => p.songIds.includes(s.id)).map(p => p.name);
-  const d = new Date(s.added);
-  const rows = [
-    ['앨범', s.album],
-    ['길이', s.dur ? fmt(s.dur) : ''],
-    ['파일 크기', fmtSize(s.size)],
-    ['원본 파일', s.file],
-    ['추가한 날', isNaN(d) ? '' : `${d.getFullYear()}.${d.getMonth() + 1}.${d.getDate()}`],
-    ['재생 목록', srcName ? `${srcName} · ${pos + 1}/${order.length}` : ''],
-    ['담긴 곳', inPls.join(', ')]
-  ].filter(x => x[1]);
-  openSheet(`<div class="bigart">${art ? `<img src="${art}" alt="">` : '♪'}</div>
-    <p class="it-title">${esc(s.name)}</p>
-    <p class="it-artist">${esc(s.artist || '가수 정보 없음')}</p>
-    <table class="it-table">${rows.map(([k, v]) => `<tr><td>${k}</td><td>${esc(v)}</td></tr>`).join('')}</table>
-    <div class="sheet-btns"><button class="btn" id="iRen">이름 바꾸기</button><button class="btn" id="iPl">플레이리스트에 담기</button></div>`, b => {
-    b.querySelector('#iRen').onclick = async () => { closeSheet(); await new Promise(r => setTimeout(r, 230)); await renameSong(s); };
-    b.querySelector('#iPl').onclick = async () => { closeSheet(); await new Promise(r => setTimeout(r, 230)); addToPlaylists(s); };
+  const head = `<div class="ihead"><div class="thumb">${art ? `<img src="${art}" alt="">` : '<span>♪</span>'}</div>
+    <div class="info"><p class="it-title">${esc(s.name)}</p><p class="it-artist">${esc(s.artist || '가수 정보 없음')}</p></div></div>
+    <div class="seg"><button data-t="lyrics" class="${infoTab === 'lyrics' ? 'on' : ''}">가사</button><button data-t="info" class="${infoTab === 'info' ? 'on' : ''}">곡 정보</button></div>`;
+  let body = '';
+  const lrc = infoTab === 'lyrics' && s.lyrics ? parseLrc(s.lyrics) : null;
+  if (infoTab === 'lyrics') {
+    if (!s.lyrics) body = `<div class="nolyr">가사가 없습니다</div><div class="sheet-btns"><button class="btn primary" id="lEdit">${I_EDIT} 가사 쓰기</button></div>`;
+    else body = `<div class="lyrics" id="lyrBox">${lrc ? lrc.map((l, i) => `<div class="lline" data-i="${i}">${esc(l.text) || '♪'}</div>`).join('') : esc(s.lyrics)}</div>
+      <div class="sheet-btns"><button class="btn" id="lEdit">${I_EDIT} 가사 수정</button></div>`;
+  } else {
+    const srcName = queueSrc === 'lib' ? '전체 곡' : (plById(queueSrc)?.name || '');
+    const inPls = playlists.filter(p => p.songIds.includes(s.id)).map(p => p.name);
+    const d = new Date(s.added);
+    const rows = [
+      ['앨범', s.album], ['길이', s.dur ? fmt(s.dur) : ''], ['파일 크기', fmtSize(s.size)], ['원본 파일', s.file],
+      ['추가한 날', isNaN(d) ? '' : `${d.getFullYear()}.${d.getMonth() + 1}.${d.getDate()}`],
+      ['재생 목록', srcName ? `${srcName} · ${pos + 1}/${order.length}` : ''], ['담긴 곳', inPls.join(', ')],
+      ['가사', s.lyrics ? (parseLrc(s.lyrics) ? '있음 (재생에 맞춰 표시)' : '있음') : '없음']
+    ].filter(x => x[1]);
+    body = `${art ? `<div class="bigart"><img src="${art}" alt=""></div>` : ''}
+      <table class="it-table">${rows.map(([k, v]) => `<tr><td>${k}</td><td>${esc(v)}</td></tr>`).join('')}</table>
+      <div class="sheet-btns"><button class="btn" id="iRen">이름 바꾸기</button><button class="btn" id="iPl">플레이리스트에 담기</button></div>`;
+  }
+  openSheet(head + body, b => {
+    b.querySelectorAll('[data-t]').forEach(x => x.onclick = () => infoSheet(x.dataset.t));
+    const le = b.querySelector('#lEdit'); if (le) le.onclick = () => lyricsEditor(s);
+    const ir = b.querySelector('#iRen'); if (ir) ir.onclick = async () => { closeSheet(); await new Promise(r => setTimeout(r, 230)); await renameSong(s); };
+    const ip = b.querySelector('#iPl'); if (ip) ip.onclick = async () => { closeSheet(); await new Promise(r => setTimeout(r, 230)); addToPlaylists(s); };
+    if (lrc) {
+      const els = [...b.querySelectorAll('.lline')];
+      els.forEach(el => el.onclick = () => { audio.currentTime = lrc[+el.dataset.i].t; if (audio.paused) audio.play().catch(() => {}); });
+      lyrState = { lines: lrc, els, idx: -1, box: b.querySelector('#lyrBox') };
+      syncLyrics(true);
+    }
+  });
+  infoOpen = true; infoSongId = s.id;
+}
+function syncLyrics(jump) {
+  if (!lyrState) return;
+  const t = audio.currentTime + 0.2, L = lyrState.lines;
+  let i = -1; for (let k = 0; k < L.length; k++) { if (L[k].t <= t) i = k; else break; }
+  if (i === lyrState.idx) return;
+  if (lyrState.idx >= 0) lyrState.els[lyrState.idx]?.classList.remove('on');
+  lyrState.idx = i;
+  const el = lyrState.els[i];
+  if (el) {
+    el.classList.add('on');
+    const box = lyrState.box;
+    box.scrollTo({ top: el.offsetTop - box.offsetTop - box.clientHeight / 2 + el.clientHeight / 2, behavior: jump ? 'auto' : 'smooth' });
+  }
+}
+audio.addEventListener('timeupdate', () => syncLyrics(false));
+audio.addEventListener('seeked', () => syncLyrics(true));
+function lyricsEditor(s) {
+  openSheet(`<p class="sheet-title">${s.lyrics ? '가사 수정' : '가사 쓰기'} · ${esc(s.name)}</p>
+    <textarea class="field lyr-edit" id="lyrIn" placeholder="가사를 입력하거나 붙여 넣으세요">${esc(s.lyrics || '')}</textarea>
+    <p class="note" style="margin-top:8px">줄 앞에 [01:23.45]처럼 시간을 넣으면 노래에 맞춰 가사가 따라가요.</p>
+    <div class="sheet-btns"><button class="btn" id="lyNo">취소</button><button class="btn" id="lyTime">지금 시간 넣기</button><button class="btn primary" id="lyOk">저장</button></div>`, b => {
+    const ta = b.querySelector('#lyrIn');
+    b.querySelector('#lyNo').onclick = () => infoSheet('lyrics');
+    b.querySelector('#lyTime').onclick = () => {
+      const t = audio.currentTime || 0, tag = `[${String(Math.floor(t / 60)).padStart(2, '0')}:${(t % 60).toFixed(2).padStart(5, '0')}]`;
+      const p = ta.selectionStart, lineStart = ta.value.lastIndexOf('\n', p - 1) + 1;
+      ta.value = ta.value.slice(0, lineStart) + tag + ta.value.slice(lineStart).replace(/^\[\d{1,3}:\d{1,2}(?:[.:]\d{1,3})?\]/, '');
+      const nextLine = ta.value.indexOf('\n', lineStart); const np = nextLine < 0 ? ta.value.length : nextLine + 1;
+      ta.focus(); ta.setSelectionRange(np, np);
+    };
+    b.querySelector('#lyOk').onclick = async () => {
+      const v = ta.value.replace(/\r\n?/g, '\n').trim();
+      if (v) s.lyrics = v; else delete s.lyrics;
+      s.v3 = true; await put('songs', s);
+      toast(v ? '가사를 저장했어요' : '가사를 지웠어요');
+      infoSheet('lyrics');
+    };
   });
 }
 $('#pArt').onclick = infoSheet;
@@ -926,6 +1032,7 @@ function updateNow() {
   $('#pName').textContent = s ? s.name : '재생 중인 곡 없음';
   const srcName = queueSrc === 'lib' ? '전체 곡' : (plById(queueSrc)?.name || '');
   $('#pSub').textContent = s ? `${s.artist ? s.artist + ' · ' : ''}${srcName} · ${order.length ? pos + 1 : 0}/${order.length}` : '곡을 눌러 재생하세요';
+  if (infoOpen && s && infoSongId !== s.id) infoSheet();
   const art = artUrl(s);
   $('#pArt').innerHTML = art ? `<img src="${art}" alt="">` : '<span>♪</span>';
   if ('mediaSession' in navigator && s) {
