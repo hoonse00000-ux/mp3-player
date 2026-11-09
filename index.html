@@ -21,7 +21,7 @@
 }
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;touch-action:manipulation;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
 input,textarea{-webkit-user-select:text;user-select:text;-webkit-touch-callout:default}
-html,body{margin:0;background:var(--bg);color:var(--text);font-family:'Noto Sans KR',system-ui,sans-serif}
+html,body{overflow-x:hidden;margin:0;background:var(--bg);color:var(--text);font-family:'Noto Sans KR',system-ui,sans-serif}
 body{min-height:100vh;padding-bottom:210px}
 button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
 input{font:inherit}
@@ -78,9 +78,9 @@ main{padding:8px 14px}
 .ihead .thumb{width:64px;height:64px;border-radius:14px;font-size:26px;cursor:default}
 .ihead .it-title,.ihead .it-artist{text-align:left;margin:0}
 .ihead .it-title{font-size:18px}
-.lyrics{max-height:46vh;overflow:auto;text-align:center;font-size:16px;line-height:1.9;white-space:pre-wrap;word-break:keep-all;padding:6px 4px 10px;-webkit-overflow-scrolling:touch}
-.lline{padding:3px 6px;border-radius:8px;color:var(--muted);transition:color .25s,transform .25s;cursor:pointer}
-.lline.on{color:var(--text);font-weight:700;transform:scale(1.05)}
+.lyrics{max-height:46vh;overflow-y:auto;overflow-x:hidden;overflow-wrap:anywhere;touch-action:pan-y;overscroll-behavior-x:none;text-align:center;font-size:16px;line-height:1.9;white-space:pre-wrap;word-break:keep-all;padding:6px 4px 10px;-webkit-overflow-scrolling:touch}
+.lline{max-width:100%;transform-origin:center;padding:3px 6px;border-radius:8px;color:var(--muted);transition:color .25s,transform .25s;cursor:pointer}
+.lline.on{color:var(--text);font-weight:700}
 .nolyr{text-align:center;color:var(--muted);padding:44px 0 30px;font-size:15px}
 .lyr-edit{min-height:44vh;resize:vertical;line-height:1.7;font-family:inherit}
 .seg3 button{font-size:13px}
@@ -93,7 +93,7 @@ main{padding:8px 14px}
 .notebig .npos{font-size:15px;font-weight:700;margin-top:6px;min-height:20px}
 .notebig .nnext{font-size:13px;color:var(--muted);margin-top:8px;min-height:18px}
 .kbd{width:100%;max-width:400px;height:auto;margin:10px auto 0;display:block}
-.score{max-height:46vh;overflow:auto;background:var(--bg);border-radius:14px;padding:4px 6px;-webkit-overflow-scrolling:touch}
+.score{max-height:46vh;overflow-y:auto;overflow-x:hidden;touch-action:pan-y;background:var(--bg);border-radius:14px;padding:4px 6px;-webkit-overflow-scrolling:touch}
 .srow{display:block;width:100%;height:auto;border-bottom:1px dashed #2c2520}
 .srow:last-child{border-bottom:0}
 .srow .sl{stroke:#5b4d43;stroke-width:1.4}
@@ -159,7 +159,7 @@ input[type=range]::-moz-range-thumb{width:16px;height:16px;border-radius:50%;bac
 /* sheet */
 #mask{position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:20;display:none}
 #mask.show{display:block}
-#sheet{position:fixed;left:0;right:0;bottom:0;z-index:21;background:var(--panel);border-radius:22px 22px 0 0;padding:8px 18px 24px;max-height:82vh;overflow:auto;transform:translateY(105%);transition:transform .22s ease}
+#sheet{overflow-x:hidden;overscroll-behavior-x:none;position:fixed;left:0;right:0;bottom:0;z-index:21;background:var(--panel);border-radius:22px 22px 0 0;padding:8px 18px 24px;max-height:82vh;overflow:auto;transform:translateY(105%);transition:transform .22s ease}
 #sheet.show{transform:none}
 .grab{width:40px;height:5px;border-radius:3px;background:var(--line);margin:4px auto 12px}
 .sheet-title{font-size:17px;font-weight:700;margin:0 0 12px}
@@ -937,10 +937,11 @@ const INSTR = {
   piano:    { label: '피아노',   lo: 36, hi: 96, center: 0,  base: 60, kbd: true },
   guitar:   { label: '기타',     lo: 40, hi: 76, center: 60, base: 60, strings: [64, 59, 55, 50, 45, 40], frets: 12 },
   ukulele:  { label: '우쿨렐레', lo: 60, hi: 81, center: 69, base: 60, strings: [69, 64, 60, 67], frets: 12 },
-  recorder: { label: '리코더',   lo: 72, hi: 93, center: 79, base: 72 },
+  flute:    { label: '플루트',   lo: 60, hi: 93, center: 74, base: 60 },
   kalimba:  { label: '칼림바',   lo: 60, hi: 88, center: 72, base: 60, white: true }
 };
 let instrument = LS.get('instrument', 'piano');
+if (instrument === 'recorder') instrument = 'flute';
 if (!INSTR[instrument]) instrument = 'piano';
 function mapNotes(raw, ins) {
   // 음역 밖으로 나가는 음이 가장 적은 옥타브로 옮기기 (같으면 덜 옮기는 쪽)
@@ -1007,10 +1008,14 @@ function position(m, ins) {
     const num = [1, 0, 2, 0, 3, 4, 0, 5, 0, 6, 0, 7][pc], o = Math.floor((m - 60) / 12);
     return `칼림바 숫자 ${num}${o === 1 ? '˙ (위에 점 1개)' : o >= 2 ? '˙˙ (위에 점 2개)' : ''}`;
   }
-  if (ins === INSTR.recorder) {   // 바로크식 소프라노 리코더 운지 (●막음 ○열기 ◐반쯤) · 엄지│왼손 3│오른손 4
-    const F = { 72: '●│●●●│●●●●', 74: '●│●●●│●●●○', 76: '●│●●●│●●○○', 77: '●│●●●│●○●●', 78: '●│●●●│○●●○', 79: '●│●●●│○○○○',
-      81: '●│●●○│○○○○', 83: '●│●○○│○○○○', 84: '●│○●○│○○○○', 86: '○│○●○│○○○○', 88: '◐│●●●│●●○○', 89: '◐│●●●│●○●○', 91: '◐│●●●│○○○○', 93: '◐│●●○│○○○○' };
-    return F[m] ? `운지 ${F[m]}` : '반음 운지는 선생님 운지표를 참고하세요';
+  if (ins === INSTR.flute) {   // 플루트 기본 운지 (L=왼손, R=오른손, 새끼=오른손 새끼손가락 E♭키)
+    const F = { 60: 'L 엄지·1·2·3 │ R 1·2·3 + 새끼(낮은 C키)', 61: 'L 엄지·1·2·3 │ R 1·2·3 + 새끼(C#키)', 62: 'L 엄지·1·2·3 │ R 1·2·3',
+      63: 'L 엄지·1·2·3 │ R 1·2·3 + 새끼', 64: 'L 엄지·1·2·3 │ R 1·2 + 새끼', 65: 'L 엄지·1·2·3 │ R 1 + 새끼', 66: 'L 엄지·1·2·3 │ R 3 + 새끼',
+      67: 'L 엄지·1·2·3 │ R 새끼', 68: 'L 엄지·1·2·3 + 왼손 새끼(G#키) │ R 새끼', 69: 'L 엄지·1·2 │ R 새끼', 70: 'L 엄지(B♭키)·1 │ R 새끼',
+      71: 'L 엄지·1 │ R 새끼', 72: 'L 1 │ R 새끼', 73: 'L 모두 뗌 │ R 새끼', 74: 'L 엄지·2·3 │ R 1·2·3', 75: 'L 엄지·2·3 │ R 1·2·3 + 새끼' };
+    if (F[m]) return `운지 ${F[m]}`;
+    if (m >= 76 && m <= 83) return `운지 ${F[m - 12]} · 숨을 더 빠르게(2옥타브)`;
+    return '3옥타브 음이에요 · 플루트 운지표를 참고하세요';
   }
   return '';
 }
