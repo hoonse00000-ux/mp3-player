@@ -17,7 +17,22 @@ body{min-height:100vh;padding-bottom:210px}
 button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
 input{font:inherit}
 header{position:sticky;top:0;z-index:5;background:linear-gradient(var(--bg) 80%,transparent);padding:18px 18px 6px}
-h1{margin:0 0 12px;font-size:26px;font-weight:900;letter-spacing:-.5px}
+.hrow{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:12px}
+.acct{padding:7px 14px;border-radius:999px;background:var(--panel2);border:1px solid var(--line);font-size:13px;font-weight:700}
+.acct.in{width:36px;height:36px;padding:0;border:0;background:linear-gradient(135deg,var(--accent),var(--accent2));color:#1a0d06;font-size:15px;font-weight:900}
+.seg{display:flex;background:var(--bg);border-radius:12px;padding:4px;margin-bottom:14px}
+.seg button{flex:1;padding:9px;border-radius:9px;font-size:14px;font-weight:700;color:var(--muted)}
+.seg button.on{background:var(--panel2);color:var(--text)}
+.stack{display:flex;flex-direction:column;gap:8px}
+.err{color:var(--danger);font-size:13px;min-height:18px;margin:8px 2px 0}
+.or{display:flex;align-items:center;gap:10px;color:var(--muted);font-size:12px;margin:16px 0}
+.or:before,.or:after{content:'';flex:1;height:1px;background:var(--line)}
+.btn.full{width:100%;justify-content:center;padding:13px}
+.btn.light{background:var(--text);color:var(--bg);font-weight:700}
+.linkbtn{color:var(--muted);font-size:13px;text-decoration:underline;margin-top:12px}
+.profile{display:flex;align-items:center;gap:14px;margin-bottom:16px}
+.profile .acct.in{width:52px;height:52px;font-size:22px;flex-shrink:0;display:grid;place-items:center;border-radius:50%}
+h1{margin:0;font-size:26px;font-weight:900;letter-spacing:-.5px}
 h1 span{color:var(--accent)}
 .tabs{display:flex;gap:8px}
 .tab{padding:8px 16px;border-radius:999px;background:var(--panel);color:var(--muted);font-weight:500;font-size:14px}
@@ -108,7 +123,7 @@ input[type=range]::-moz-range-thumb{width:16px;height:16px;border-radius:50%;bac
 </head>
 <body>
 <header>
-  <h1>내 음악<span>.</span></h1>
+  <div class="hrow"><h1>내 음악<span>.</span></h1><button class="acct" id="acctBtn">로그인</button></div>
   <div class="tabs">
     <button class="tab on" data-tab="library">전체 곡</button>
     <button class="tab" data-tab="playlists">플레이리스트</button>
@@ -148,6 +163,7 @@ input[type=range]::-moz-range-thumb{width:16px;height:16px;border-radius:50%;bac
 <div id="toast"></div>
 <div id="drop">여기에 MP3를 놓으세요 🎵</div>
 
+<script src="firebase-config.js"></script>
 <script>
 (() => {
 const $ = s => document.querySelector(s);
@@ -705,6 +721,97 @@ function drawViz() {
   loop();
 }
 
+/* ---------- 로그인 (Firebase Auth) ---------- */
+let fbStatus = window.FB_STATUS || 'loading', user = null;
+addEventListener('fb-status', e => { fbStatus = e.detail; renderAccount(); });
+addEventListener('fb-user', e => {
+  const was = user; user = e.detail; renderAccount();
+  if (user && !was && fbStatus === 'ready' && window.FB_SIGNED_IN_NOW) { window.FB_SIGNED_IN_NOW = false; toast(`${displayName(user)}님, 환영해요`); }
+});
+const displayName = u => u.displayName || (u.email || '').split('@')[0] || '사용자';
+function renderAccount() {
+  const b = $('#acctBtn');
+  if (user) { b.className = 'acct in'; b.textContent = displayName(user).slice(0, 1).toUpperCase(); b.setAttribute('aria-label', '내 계정'); }
+  else { b.className = 'acct'; b.textContent = '로그인'; b.setAttribute('aria-label', '로그인'); }
+}
+const AUTH_ERR = {
+  'auth/invalid-email': '이메일 형식이 올바르지 않아요',
+  'auth/missing-password': '비밀번호를 입력해 주세요',
+  'auth/user-not-found': '이메일 또는 비밀번호가 맞지 않아요',
+  'auth/wrong-password': '이메일 또는 비밀번호가 맞지 않아요',
+  'auth/invalid-credential': '이메일 또는 비밀번호가 맞지 않아요',
+  'auth/invalid-login-credentials': '이메일 또는 비밀번호가 맞지 않아요',
+  'auth/email-already-in-use': '이미 가입된 이메일이에요. 로그인해 주세요',
+  'auth/weak-password': '비밀번호는 6자 이상이어야 해요',
+  'auth/too-many-requests': '시도가 너무 많았어요. 잠시 후 다시 해 주세요',
+  'auth/popup-closed-by-user': '로그인 창이 닫혔어요',
+  'auth/cancelled-popup-request': '로그인 창이 닫혔어요',
+  'auth/unauthorized-domain': '이 주소가 Firebase 승인된 도메인에 없어요',
+  'auth/operation-not-allowed': 'Firebase에서 이 로그인 방식이 꺼져 있어요',
+  'auth/network-request-failed': '인터넷 연결을 확인해 주세요'
+};
+const authMsg = e => AUTH_ERR[e && e.code] || `로그인에 실패했어요 (${(e && e.code) || '알 수 없는 오류'})`;
+$('#acctBtn').onclick = () => {
+  if (fbStatus !== 'ready') {
+    const msg = { loading: '로그인 기능을 불러오는 중이에요. 잠시 후 다시 눌러 주세요.',
+      noconfig: '아직 Firebase가 연결되지 않아서 로그인을 쓸 수 없어요. 연결이 끝나면 이 버튼으로 로그인할 수 있어요.',
+      error: '로그인 기능을 불러오지 못했어요. 인터넷 연결을 확인하거나, GitHub Pages 주소에서 열어 주세요.' }[fbStatus] || '';
+    return openSheet(`<p class="sheet-title">로그인</p><p class="note" style="font-size:14px">${msg}</p><div class="sheet-btns"><button class="btn primary" id="okx">확인</button></div>`, b => b.querySelector('#okx').onclick = closeSheet);
+  }
+  user ? profileSheet() : loginSheet('in');
+};
+function profileSheet() {
+  openSheet(`<p class="sheet-title">내 계정</p>
+    <div class="profile"><div class="acct in">${esc(displayName(user).slice(0, 1).toUpperCase())}</div>
+      <div class="info"><div class="name">${esc(displayName(user))}</div><div class="sub">${esc(user.email || '')}</div></div></div>
+    <p class="note">곡과 플레이리스트는 아직 이 기기에 저장돼요. 다음 단계에서 계정에 동기화할 수 있어요.</p>
+    <div class="sheet-btns"><button class="btn" id="cx">닫기</button><button class="btn" style="color:var(--danger)" id="out">로그아웃</button></div>`, b => {
+    b.querySelector('#cx').onclick = closeSheet;
+    b.querySelector('#out').onclick = async () => { try { await window.FB.signOut(); closeSheet(); toast('로그아웃했어요'); } catch (e) { toast(authMsg(e)); } };
+  });
+}
+function loginSheet(mode) {
+  const up = mode === 'up';
+  openSheet(`<p class="sheet-title">${up ? '회원가입' : '로그인'}</p>
+    <div class="seg"><button data-m="in" class="${up ? '' : 'on'}">로그인</button><button data-m="up" class="${up ? 'on' : ''}">회원가입</button></div>
+    <form id="lf" class="stack">
+      ${up ? '<input class="field" id="lName" placeholder="이름 (선택)" autocomplete="name" maxlength="30">' : ''}
+      <input class="field" id="lEmail" type="email" placeholder="이메일" autocomplete="email" inputmode="email" autocapitalize="off">
+      <input class="field" id="lPw" type="password" placeholder="${up ? '비밀번호 (6자 이상)' : '비밀번호'}" autocomplete="${up ? 'new-password' : 'current-password'}">
+      <button class="btn primary full" id="lGo">${up ? '가입하기' : '로그인'}</button>
+    </form>
+    <div class="err" id="lErr"></div>
+    ${up ? '' : '<button class="linkbtn" id="lReset">비밀번호를 잊으셨나요?</button>'}
+    <div class="or">또는</div>
+    <button class="btn light full" id="lGoogle">Google 계정으로 계속하기</button>`, b => {
+    const err = m => b.querySelector('#lErr').textContent = m || '';
+    const busy = v => b.querySelectorAll('button').forEach(x => x.disabled = v);
+    b.querySelectorAll('[data-m]').forEach(x => x.onclick = () => loginSheet(x.dataset.m));
+    b.querySelector('#lf').onsubmit = async e => {
+      e.preventDefault(); err('');
+      const em = b.querySelector('#lEmail').value.trim(), pw = b.querySelector('#lPw').value;
+      if (!em) return err('이메일을 입력해 주세요');
+      if (!pw) return err('비밀번호를 입력해 주세요');
+      busy(true); window.FB_SIGNED_IN_NOW = true;
+      try {
+        if (up) await window.FB.signUp(em, pw, (b.querySelector('#lName').value || '').trim());
+        else await window.FB.signIn(em, pw);
+        closeSheet();
+      } catch (ex) { window.FB_SIGNED_IN_NOW = false; err(authMsg(ex)); busy(false); }
+    };
+    const rs = b.querySelector('#lReset');
+    if (rs) rs.onclick = async () => {
+      const em = b.querySelector('#lEmail').value.trim();
+      if (!em) return err('위에 이메일을 먼저 입력해 주세요');
+      try { await window.FB.reset(em); err(''); toast('비밀번호 재설정 메일을 보냈어요'); } catch (ex) { err(authMsg(ex)); }
+    };
+    b.querySelector('#lGoogle').onclick = async () => {
+      err(''); busy(true); window.FB_SIGNED_IN_NOW = true;
+      try { await window.FB.google(); closeSheet(); } catch (ex) { window.FB_SIGNED_IN_NOW = false; err(authMsg(ex)); busy(false); }
+    };
+  });
+}
+
 /* ---------- 재생 기록 저장 / 복원 ---------- */
 let restoring = false, lastSave = 0, pendingTime = null;
 function snapshot() {
@@ -773,9 +880,44 @@ async function restoreState() {
   } catch { db = null; songs = []; playlists = []; }
   $('#shuffleBtn').innerHTML = SHUF;
   await restoreState();
+  renderAccount();
   setPlayIcon(); updateModes(); render();
 })();
 })();
+</script>
+<script type="module">
+const cfg = window.FIREBASE_CONFIG;
+const status = s => { window.FB_STATUS = s; dispatchEvent(new CustomEvent('fb-status', { detail: s })); };
+if (!cfg) status('noconfig');
+else {
+  try {
+    const V = '10.12.2';
+    const { initializeApp } = await import(`https://www.gstatic.com/firebasejs/${V}/firebase-app.js`);
+    const A = await import(`https://www.gstatic.com/firebasejs/${V}/firebase-auth.js`);
+    const app = initializeApp(cfg);
+    const auth = A.getAuth(app);
+    auth.languageCode = 'ko';
+    await A.setPersistence(auth, A.browserLocalPersistence);   // 앱을 닫아도 로그인 유지
+    const google = new A.GoogleAuthProvider();
+    window.FB = {
+      app, auth,
+      async google() {
+        try { return await A.signInWithPopup(auth, google); }
+        catch (e) {
+          if (['auth/popup-blocked', 'auth/operation-not-supported-in-this-environment'].includes(e.code)) return A.signInWithRedirect(auth, google);
+          throw e;
+        }
+      },
+      signIn: (e, p) => A.signInWithEmailAndPassword(auth, e, p),
+      async signUp(e, p, name) { const c = await A.createUserWithEmailAndPassword(auth, e, p); if (name) await A.updateProfile(c.user, { displayName: name }); return c; },
+      reset: e => A.sendPasswordResetEmail(auth, e),
+      signOut: () => A.signOut(auth)
+    };
+    A.getRedirectResult(auth).catch(() => {});
+    status('ready');
+    A.onAuthStateChanged(auth, u => dispatchEvent(new CustomEvent('fb-user', { detail: u })));
+  } catch (e) { console.error(e); status('error'); }
+}
 </script>
 </body>
 </html>
