@@ -207,6 +207,8 @@ input[type=range]::-moz-range-thumb{width:16px;height:16px;border-radius:50%;bac
 
 <script>
 // Firebase 설정 (웹에 공개돼도 괜찮은 값이에요. 보안은 Firebase 콘솔의 규칙과 승인된 도메인으로 지켜요.)
+// 구글 드라이브 동기화용 OAuth 클라이언트 ID (Google Cloud > API 및 서비스 > 사용자 인증 정보)
+window.GOOGLE_CLIENT_ID = '';
 window.FIREBASE_CONFIG = {
   apiKey: "AIzaSyClt5JQwO1zA6C4uygTcCrnSG0dDHYQl1I",
   authDomain: "mp-3-e2ac0.firebaseapp.com",
@@ -612,7 +614,7 @@ function songRow(s, i, ctx) {
     <button class="ic" data-menu="${s.id}" aria-label="메뉴">⋯</button>
   </div>`;
 }
-const CLOUD_TXT = { up: '올리는 중', down: '받는 중', remote: '클라우드', err: '동기화 실패' };
+const CLOUD_TXT = { up: '올리는 중', down: '받는 중', remote: '드라이브', err: '동기화 실패' };
 const subLine = s => [s.artist, s.dur ? fmt(s.dur) : fmtSize(s.size), CLOUD_TXT[s.cloud]].filter(Boolean).join(' · ');
 const artUrls = new Map();
 function artUrl(s) {
@@ -1225,7 +1227,7 @@ let fbStatus = window.FB_STATUS || 'loading', user = null;
 addEventListener('fb-status', e => { fbStatus = e.detail; renderAccount(); });
 addEventListener('fb-user', e => {
   const was = user; user = e.detail; renderAccount();
-  if (user && (!was || was.uid !== user.uid)) startCloud(); else if (!user && was) stopCloud();
+  if (!user && was) stopCloud();
   if (user && !was && fbStatus === 'ready' && window.FB_SIGNED_IN_NOW) { window.FB_SIGNED_IN_NOW = false; toast(`${displayName(user)}님, 환영해요`); }
 });
 const displayName = u => u.displayName || (u.email || '').split('@')[0] || '사용자';
@@ -1264,9 +1266,18 @@ function profileSheet() {
   openSheet(`<p class="sheet-title">내 계정</p>
     <div class="profile"><div class="acct in">${esc(displayName(user).slice(0, 1).toUpperCase())}</div>
       <div class="info"><div class="name">${esc(displayName(user))}</div><div class="sub">${esc(user.email || '')}</div></div></div>
+    <p class="sheet-title" style="font-size:15px;margin-top:4px">구글 드라이브 동기화</p>
     <div class="note" id="syncInfo" style="font-size:14px;line-height:1.7">${syncText()}</div>
+    <div class="sheet-btns">${!driveOn() ? '<button class="btn primary" id="dConn">구글 드라이브 연결</button>'
+      : `${tokenOk() ? '<button class="btn" id="dSync">지금 동기화</button>' : '<button class="btn primary" id="dConn">다시 연결</button>'}<button class="btn" id="dOff">연결 해제</button>`}</div>
     <div class="sheet-btns"><button class="btn" id="cx">닫기</button><button class="btn" style="color:var(--danger)" id="out">로그아웃</button></div>`, b => {
     b.querySelector('#cx').onclick = closeSheet;
+    const dc = b.querySelector('#dConn'); if (dc) dc.onclick = () => { LS.set('silentBlocked', false); driveConnect(false); };
+    const ds = b.querySelector('#dSync'); if (ds) ds.onclick = () => syncNow();
+    const dof = b.querySelector('#dOff'); if (dof) dof.onclick = async () => {
+      if (!await confirmBox('구글 드라이브 연결을 해제할까요? 이 기기의 곡과 드라이브에 저장된 곡은 그대로 남아요.', '해제')) return;
+      driveDisconnect(); toast('연결을 해제했어요');
+    };
     b.querySelector('#out').onclick = async () => { try { await window.FB.signOut(); closeSheet(); toast('로그아웃했어요'); } catch (e) { toast(authMsg(e)); } };
   });
 }
@@ -1312,174 +1323,242 @@ function loginSheet(mode) {
   });
 }
 
-/* ---------- 클라우드 동기화 (Firestore + Storage) ---------- */
+/* ---------- 구글 드라이브 동기화 (앱 전용 숨김 폴더 appDataFolder) ---------- */
+const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.appdata';
+const DAPI = 'https://www.googleapis.com/drive/v3', UAPI = 'https://www.googleapis.com/upload/drive/v3';
+const REDIRECT = location.origin + location.pathname.replace(/index\.html$/, '');
 let localReadyResolve; const localReady = new Promise(r => localReadyResolve = r);
-let cloudUnsubs = [], cloudErr = '', upQ = [], upBusy = false;
+let drv = LS.get('drive', null);           // { linked, token, exp, email }
+let cloudErr = '', syncBusy = false, syncAgain = false, syncTimer = null, lastSync = LS.get('lastSync', 0);
 const dlMap = new Map();
-const cloud = () => (user && window.FB && window.FB.cloud) ? window.FB.cloud : null;
-const mine = x => user && x.owner === user.uid;
+const driveOn = () => !!(drv && drv.linked);
+const tokenOk = () => !!(drv && drv.token && Date.now() < drv.exp - 60000);
+const cloud = () => driveOn() && tokenOk();
+const mine = x => !!x.synced;
+const tombs = () => LS.get('tomb', { songs: {}, playlists: {} });
+function addTomb(kind, id) { const t = tombs(); t[kind][id] = Date.now(); LS.set('tomb', t); }
 const songMeta = s => ({ name: s.name, artist: s.artist || '', album: s.album || '', lyrics: s.lyrics || '', dur: s.dur || 0, size: s.size || 0,
-  file: s.file || '', added: s.added || Date.now(), renamed: !!s.renamed, hasArt: !!s.art, updatedAt: s.updatedAt || Date.now() });
-const plMeta = p => ({ name: p.name, songIds: p.songIds, created: p.created || Date.now(), updatedAt: p.updatedAt || Date.now() });
-const CLOUD_ERR = {
-  'storage/unauthorized': '권한이 없어요 (Storage 규칙 확인)', 'permission-denied': '권한이 없어요 (Firestore 규칙 확인)',
-  'storage/quota-exceeded': '저장 공간이 꽉 찼어요', 'storage/retry-limit-exceeded': '인터넷이 불안정해요',
-  'storage/unknown': 'Storage가 준비되지 않았어요 (Blaze 요금제·Storage 시작 확인)', 'storage/bucket-not-found': 'Storage가 아직 만들어지지 않았어요'
-};
-const cloudMsg = e => CLOUD_ERR[e && e.code] || ((e && e.code) || '알 수 없는 오류');
-function setCloudErr(e) { cloudErr = cloudMsg(e); refreshSyncInfo(); }
+  file: s.file || '', added: s.added || Date.now(), renamed: !!s.renamed, hasArt: !!s.art || !!s.artId, updatedAt: s.updatedAt || 1, fileId: s.fileId || null, artId: s.artId || null });
+const plMeta = p => ({ name: p.name, songIds: p.songIds, created: p.created || Date.now(), updatedAt: p.updatedAt || 1 });
+
+// 로그인 (리디렉션 방식: 홈 화면 앱에서도 동작)
+function driveConnect(silent) {
+  if (!window.GOOGLE_CLIENT_ID) return toast('구글 드라이브 연결 설정이 아직 안 됐어요');
+  saveState();
+  const st = Math.random().toString(36).slice(2);
+  LS.set('oauthState', st);
+  if (silent) LS.set('lastSilent', Date.now());
+  const hint = (drv && drv.email) || (user && user.email) || '';
+  const q = { client_id: window.GOOGLE_CLIENT_ID, redirect_uri: REDIRECT, response_type: 'token', scope: DRIVE_SCOPE, include_granted_scopes: 'true', state: st };
+  if (silent) q.prompt = 'none';
+  if (hint) q.login_hint = hint;
+  location.href = 'https://accounts.google.com/o/oauth2/v2/auth?' + new URLSearchParams(q);
+}
+(function handleOAuthReturn() {
+  const h = location.hash;
+  if (!/access_token=|error=/.test(h)) return;
+  const q = new URLSearchParams(h.slice(1));
+  try { history.replaceState(null, '', location.pathname + location.search); } catch {}
+  if (!q.get('state') || q.get('state') !== LS.get('oauthState', '')) return;
+  LS.set('oauthState', '');
+  if (q.get('access_token')) {
+    drv = Object.assign(drv || {}, { linked: true, token: q.get('access_token'), exp: Date.now() + (+q.get('expires_in') || 3600) * 1000 });
+    LS.set('drive', drv); LS.set('silentBlocked', false);
+    window.__driveJustLinked = true;
+  } else {
+    const e = q.get('error');
+    if (drv) { drv.token = null; LS.set('drive', drv); }
+    if (/interaction_required|login_required|consent_required|account_selection_required/.test(e)) LS.set('silentBlocked', true);
+    else cloudErr = e === 'access_denied' ? '구글 드라이브 연결을 취소했어요' : '연결 오류: ' + e;
+  }
+})();
+function driveDisconnect() {
+  const t = drv && drv.token;
+  drv = null; LS.set('drive', null); LS.set('tomb', { songs: {}, playlists: {} });
+  if (t) fetch('https://oauth2.googleapis.com/revoke?token=' + encodeURIComponent(t), { method: 'POST' }).catch(() => {});
+  songs.forEach(x => { if (x.cloud && x.cloud !== 'done') x.cloud = x.blob ? undefined : 'remote'; });
+  refreshSyncInfo(); softRender();
+}
+async function gfetch(url, opt = {}) {
+  if (!tokenOk()) throw { code: 'token' };
+  const r = await fetch(url, Object.assign({}, opt, { headers: Object.assign({}, opt.headers || {}, { Authorization: 'Bearer ' + drv.token }) }));
+  if (r.status === 401) { drv.token = null; LS.set('drive', drv); throw { code: 'token' }; }
+  if (!r.ok) { let m = ''; try { m = (await r.json()).error.message; } catch {} throw { code: 'http' + r.status, message: m }; }
+  return r;
+}
+async function dFind(name) {
+  const r = await gfetch(`${DAPI}/files?spaces=appDataFolder&fields=files(id,name)&q=${encodeURIComponent(`name='${name}'`)}`);
+  return (await r.json()).files[0] || null;
+}
+async function dUpload(name, blob, id) {
+  const type = blob.type || 'application/octet-stream';
+  if (id) { await gfetch(`${UAPI}/files/${id}?uploadType=media&fields=id`, { method: 'PATCH', headers: { 'Content-Type': type }, body: blob }); return id; }
+  const r = await gfetch(`${UAPI}/files?uploadType=resumable&fields=id`, { method: 'POST',
+    headers: { 'Content-Type': 'application/json; charset=UTF-8', 'X-Upload-Content-Type': type, 'X-Upload-Content-Length': String(blob.size) },
+    body: JSON.stringify({ name, parents: ['appDataFolder'] }) });
+  const loc = r.headers.get('Location') || r.headers.get('location');
+  if (loc) {
+    const r2 = await fetch(loc, { method: 'PUT', headers: { 'Content-Type': type }, body: blob });
+    if (!r2.ok) throw { code: 'http' + r2.status, message: '업로드 실패' };
+    return (await r2.json()).id;
+  }
+  const bd = 'mp3p' + Math.random().toString(36).slice(2);
+  const body = new Blob([`--${bd}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify({ name, parents: ['appDataFolder'] })}\r\n--${bd}\r\nContent-Type: ${type}\r\n\r\n`, blob, `\r\n--${bd}--`]);
+  const r3 = await gfetch(`${UAPI}/files?uploadType=multipart&fields=id`, { method: 'POST', headers: { 'Content-Type': `multipart/related; boundary=${bd}` }, body });
+  return (await r3.json()).id;
+}
+const dDownload = async id => (await gfetch(`${DAPI}/files/${id}?alt=media`)).blob();
+const dDelete = id => id ? gfetch(`${DAPI}/files/${id}`, { method: 'DELETE' }).catch(() => {}) : null;
+async function writeLib(R, f) {
+  R.updatedAt = Date.now();
+  const id = await dUpload('library.json', new Blob([JSON.stringify(R)], { type: 'application/json' }), f && f.id);
+  return { id };
+}
+
+const CLOUD_ERR_TXT = e => e && e.code === 'token' ? '연결이 만료됐어요. 다시 연결해 주세요' :
+  e && e.code === 'http403' ? '권한이 없어요 (Drive API 사용 설정·테스트 사용자 확인)' : (e && (e.message || e.code)) || '동기화 오류';
 function syncText() {
-  if (!cloud()) return fbStatus === 'ready' ? '동기화 기능을 불러오지 못했어요.' : '';
-  const ownedCount = songs.filter(mine).length, up = songs.filter(x => x.cloud === 'up' || (mine(x) && x.cloud === 'pending')).length,
-    down = songs.filter(x => x.cloud === 'remote' || x.cloud === 'down').length;
-  return `계정에 <b>${ownedCount}곡</b>, 플레이리스트 <b>${playlists.filter(mine).length}개</b>가 저장돼 있어요.` +
-    (up ? `<br>올리는 중: ${up}곡` : '') + (down ? `<br>이 기기로 받는 중: ${down}곡` : '') +
-    (cloudErr ? `<br><span style="color:var(--danger)">동기화 오류: ${esc(cloudErr)}</span>` : (!up && !down ? '<br>다른 기기에서 같은 계정으로 로그인하면 똑같이 보여요.' : ''));
+  if (!driveOn()) return '구글 드라이브를 연결하면 곡·플레이리스트·가사가 내 드라이브에 저장돼서, 다른 기기에서도 그대로 볼 수 있어요.';
+  const up = songs.filter(x => x.cloud === 'up' || (x.blob && !x.synced)).length,
+    down = songs.filter(x => !x.blob).length, n = songs.filter(x => x.synced).length;
+  const when = lastSync ? new Date(lastSync) : null;
+  return `${drv.email ? `<b>${esc(drv.email)}</b>의 드라이브` : '구글 드라이브'}에 <b>${n}곡</b>이 저장돼 있어요.` +
+    (up ? `<br>올릴 곡: ${up}곡` : '') + (down ? `<br>이 기기로 받을 곡: ${down}곡` : '') +
+    (syncBusy ? '<br>동기화하는 중…' : when ? `<br>마지막 동기화: ${when.getMonth() + 1}/${when.getDate()} ${String(when.getHours()).padStart(2, '0')}:${String(when.getMinutes()).padStart(2, '0')}` : '') +
+    (!tokenOk() ? '<br><span style="color:var(--accent2)">연결이 만료됐어요. 아래 <b>다시 연결</b>을 눌러 주세요.</span>' : '') +
+    (cloudErr && tokenOk() ? `<br><span style="color:var(--danger)">오류: ${esc(cloudErr)}</span>` : '');
 }
 function refreshSyncInfo() { const el = $('#syncInfo'); if (el) el.innerHTML = syncText(); }
 let renderT = null;
 function softRender() { clearTimeout(renderT); renderT = setTimeout(() => { render(); refreshSyncInfo(); }, 150); }
+function scheduleSync(ms = 2500) { if (!driveOn()) return; clearTimeout(syncTimer); syncTimer = setTimeout(syncNow, ms); }
 
-async function saveSong(s, quiet) {
-  if (!quiet) s.updatedAt = Date.now();
-  await put('songs', s);
-  const c = cloud();
-  if (c && mine(s) && s.cloud !== 'up' && s.cloud !== 'pending') c.setSong(user.uid, s.id, songMeta(s)).catch(setCloudErr);
-}
-async function savePl(p) {
-  p.updatedAt = Date.now();
-  if (user && !p.owner) p.owner = user.uid;
-  await put('playlists', p);
-  const c = cloud();
-  if (c && mine(p)) c.setPl(user.uid, p.id, plMeta(p)).catch(setCloudErr);
-}
-function cloudDeleteSong(s) {
-  const c = cloud(); if (!c || !mine(s)) return;
-  c.delSong(user.uid, s.id).catch(setCloudErr);
-  c.remove(`users/${user.uid}/songs/${s.id}.mp3`); c.remove(`users/${user.uid}/art/${s.id}.jpg`);
-}
-function cloudDeletePl(p) { const c = cloud(); if (c && mine(p)) c.delPl(user.uid, p.id).catch(setCloudErr); }
+async function saveSong(s, quiet) { if (!quiet) s.updatedAt = Date.now(); await put('songs', s); if (!quiet) scheduleSync(); }
+async function savePl(p) { p.updatedAt = Date.now(); await put('playlists', p); scheduleSync(); }
+function cloudDeleteSong(s) { if (s.synced) { addTomb('songs', s.id); scheduleSync(); } }
+function cloudDeletePl(p) { addTomb('playlists', p.id); scheduleSync(); }
+function cloudQueueUpload(s) { s.updatedAt = s.updatedAt || Date.now(); scheduleSync(1000); }
 
-// 올리기 (한 곡씩 차례로)
-function cloudQueueUpload(s) {
-  if (!cloud() || !s.blob) return;
-  if (s.owner && s.owner !== user.uid) return;       // 다른 계정의 곡은 올리지 않음
-  if (s.cloud === 'done' && mine(s)) return;
-  s.owner = user.uid; s.cloud = 'pending';
-  put('songs', s).catch(() => {});
-  if (!upQ.includes(s)) upQ.push(s);
-  pumpUploads();
+async function removeLocalSong(s) {
+  await del('songs', s.id).catch(() => {});
+  songs = songs.filter(x => x !== s);
+  if (curId === s.id) { audio.pause(); audio.removeAttribute('src'); curId = null; updateNow(); }
 }
-async function pumpUploads() {
-  if (upBusy) return; upBusy = true;
-  while (upQ.length && cloud()) {
-    const s = upQ.shift();
-    if (!songById(s.id)) continue;
-    const c = cloud(), uid = user.uid;
-    try {
+async function syncNow() {
+  if (!driveOn()) return;
+  if (!tokenOk()) { refreshSyncInfo(); return; }
+  if (syncBusy) { syncAgain = true; return; }
+  syncBusy = true; refreshSyncInfo();
+  let changedLocal = false;
+  try {
+    await localReady;
+    if (!drv.email) { try { const a = await (await gfetch(`${DAPI}/about?fields=user(emailAddress)`)).json(); drv.email = a.user.emailAddress; LS.set('drive', drv); } catch {} }
+    let libFile = await dFind('library.json');
+    let R = { v: 1, songs: {}, playlists: {}, tomb: { songs: {}, playlists: {} } };
+    if (libFile) { try { R = Object.assign(R, await (await gfetch(`${DAPI}/files/${libFile.id}?alt=media`)).json()); } catch {} }
+    R.tomb = R.tomb || {}; R.tomb.songs = R.tomb.songs || {}; R.tomb.playlists = R.tomb.playlists || {};
+    let dirty = !libFile;
+    // 1) 이 기기에서 지운 것 → 드라이브에서도 지우기
+    const T = tombs();
+    for (const [id, ts] of Object.entries(T.songs)) { const m = R.songs[id]; if (m) { dDelete(m.fileId); dDelete(m.artId); delete R.songs[id]; } R.tomb.songs[id] = Math.max(ts, R.tomb.songs[id] || 0); dirty = true; }
+    for (const [id, ts] of Object.entries(T.playlists)) { delete R.playlists[id]; R.tomb.playlists[id] = Math.max(ts, R.tomb.playlists[id] || 0); dirty = true; }
+    // 2) 다른 기기에서 지운 것 → 이 기기에서도 지우기
+    for (const [id, ts] of Object.entries(R.tomb.songs)) { const s = songById(id); if (s && s.synced && (s.updatedAt || 0) <= ts) { await removeLocalSong(s); changedLocal = true; } }
+    for (const [id, ts] of Object.entries(R.tomb.playlists)) { const p = plById(id); if (p && (p.updatedAt || 0) <= ts) { await del('playlists', id).catch(() => {}); playlists = playlists.filter(x => x !== p); if (openPl === id) openPl = null; changedLocal = true; } }
+    // 3) 곡 정보 맞추기
+    for (const [id, m] of Object.entries(R.songs)) {
+      const s = songById(id);
+      if (!s) {
+        const st = { id, name: m.name, dur: m.dur, size: m.size, file: m.file, added: m.added, renamed: m.renamed, hasArt: m.hasArt, updatedAt: m.updatedAt,
+          fileId: m.fileId, artId: m.artId, synced: true, cloud: 'remote', blob: null, v2: true, v3: true };
+        for (const k of ['artist', 'album', 'lyrics']) if (m[k]) st[k] = m[k];
+        songs.push(st); await put('songs', st).catch(() => {}); changedLocal = true;
+      } else if ((m.updatedAt || 0) > (s.updatedAt || 0)) {
+        for (const k of ['name', 'artist', 'album', 'lyrics']) { if (m[k]) s[k] = m[k]; else if (k !== 'name') delete s[k]; }
+        Object.assign(s, { renamed: m.renamed, updatedAt: m.updatedAt, fileId: m.fileId, artId: m.artId, hasArt: m.hasArt, synced: true });
+        await put('songs', s).catch(() => {}); changedLocal = true;
+        if (s.id === curId) updateNow();
+      } else {
+        if (!s.synced || !s.fileId) { s.synced = true; s.fileId = s.fileId || m.fileId; s.artId = s.artId || m.artId; await put('songs', s).catch(() => {}); }
+        if ((s.updatedAt || 0) > (m.updatedAt || 0)) { R.songs[id] = songMeta(s); dirty = true; }
+      }
+    }
+    // 4) 플레이리스트 맞추기
+    for (const [id, m] of Object.entries(R.playlists)) {
+      const p = plById(id);
+      if (!p) { const pl = { id, name: m.name, songIds: m.songIds || [], created: m.created, updatedAt: m.updatedAt }; playlists.push(pl); await put('playlists', pl).catch(() => {}); changedLocal = true; }
+      else if ((m.updatedAt || 0) > (p.updatedAt || 0)) { p.name = m.name; p.songIds = m.songIds || []; p.updatedAt = m.updatedAt; await put('playlists', p).catch(() => {}); changedLocal = true; if (queueSrc === id) syncQueue(p.songIds); }
+      else if ((p.updatedAt || 0) > (m.updatedAt || 0)) { R.playlists[id] = plMeta(p); dirty = true; }
+    }
+    for (const p of playlists) if (!R.playlists[p.id] && !R.tomb.playlists[p.id]) { p.updatedAt = p.updatedAt || Date.now(); R.playlists[p.id] = plMeta(p); dirty = true; }
+    if (changedLocal) { songs.sort((a, b) => (a.added || 0) - (b.added || 0)); playlists.sort((a, b) => (a.created || 0) - (b.created || 0)); render(); }
+    if (dirty) libFile = await writeLib(R, libFile);
+    // 처리한 삭제 기록 정리
+    const T2 = tombs(); Object.keys(T.songs).forEach(k => delete T2.songs[k]); Object.keys(T.playlists).forEach(k => delete T2.playlists[k]); LS.set('tomb', T2);
+    // 5) 이 기기에만 있는 곡 올리기 (한 곡씩, 올릴 때마다 목록 저장)
+    for (const s of songs.filter(x => x.blob && !R.songs[x.id] && !R.tomb.songs[x.id])) {
+      if (!songById(s.id)) continue;
       s.cloud = 'up'; softRender();
-      await c.upload(`users/${uid}/songs/${s.id}.mp3`, s.blob);
-      if (s.art) await c.upload(`users/${uid}/art/${s.id}.jpg`, s.art);
-      if (!songById(s.id)) { c.remove(`users/${uid}/songs/${s.id}.mp3`); c.remove(`users/${uid}/art/${s.id}.jpg`); continue; }
-      s.updatedAt = s.updatedAt || Date.now();
-      await c.setSong(uid, s.id, songMeta(s));
-      s.cloud = 'done'; cloudErr = '';
-    } catch (e) { s.cloud = 'err'; setCloudErr(e); }
-    await put('songs', s).catch(() => {});
-    softRender();
+      try {
+        s.fileId = await dUpload(`${s.id}.mp3`, s.blob);
+        if (s.art) s.artId = await dUpload(`${s.id}.jpg`, s.art);
+        if (!songById(s.id)) { dDelete(s.fileId); dDelete(s.artId); continue; }
+        s.synced = true; s.cloud = 'done'; s.updatedAt = s.updatedAt || Date.now();
+        R.songs[s.id] = songMeta(s);
+        libFile = await writeLib(R, libFile);
+      } catch (e) { s.cloud = 'err'; throw e; }
+      finally { await put('songs', s).catch(() => {}); softRender(); }
+    }
+    lastSync = Date.now(); LS.set('lastSync', lastSync); cloudErr = '';
+    startDownloads();
+  } catch (e) { cloudErr = CLOUD_ERR_TXT(e); }
+  finally {
+    syncBusy = false; refreshSyncInfo(); softRender();
+    if (changedLocal && infoOpen && songById(infoSongId)) infoSheet();
+    if (syncAgain) { syncAgain = false; setTimeout(syncNow, 500); }
   }
-  upBusy = false;
 }
-// 받기
+// 드라이브에서 곡 받기
 function downloadSong(s) {
   if (s.blob) return Promise.resolve(s);
   if (dlMap.has(s.id)) return dlMap.get(s.id);
-  const c = cloud(); if (!c) return Promise.reject(new Error('offline'));
-  const uid = user.uid;
+  if (!cloud() || !s.fileId) { if (driveOn() && !tokenOk()) toast('구글 드라이브 연결이 만료됐어요. 계정 버튼에서 다시 연결해 주세요'); return Promise.reject(new Error('offline')); }
   const job = (async () => {
     s.cloud = 'down'; softRender();
     try {
-      const b = await c.download(`users/${uid}/songs/${s.id}.mp3`);
-      s.blob = b.type ? b : new Blob([b], { type: 'audio/mpeg' });
-      if (s.hasArt && !s.art) { try { s.art = await c.download(`users/${uid}/art/${s.id}.jpg`); } catch {} }
-      s.cloud = 'done'; s.v2 = true; s.v3 = true;
-      await put('songs', s); cloudErr = '';
+      const b = await dDownload(s.fileId);
+      s.blob = b.type && b.type !== 'application/octet-stream' ? b : new Blob([b], { type: 'audio/mpeg' });
+      if (s.artId && !s.art) { try { const a = await dDownload(s.artId); s.art = a.type && a.type !== 'application/octet-stream' ? a : new Blob([a], { type: 'image/jpeg' }); } catch {} }
+      s.cloud = 'done'; await put('songs', s);
       return s;
-    } catch (e) { s.cloud = 'remote'; setCloudErr(e); throw e; }
+    } catch (e) { s.cloud = 'remote'; cloudErr = CLOUD_ERR_TXT(e); throw e; }
     finally { dlMap.delete(s.id); softRender(); if (s.id === curId) updateNow(); }
   })();
   dlMap.set(s.id, job);
   return job;
 }
-async function pumpDownloads() {
-  for (const s of songs.filter(x => !x.blob && x.cloud === 'remote')) { if (!cloud()) break; try { await downloadSong(s); } catch {} }
-}
 let dlPumping = false;
-function startDownloads() { if (dlPumping) return; dlPumping = true; pumpDownloads().finally(() => { dlPumping = false; }); }
-
-async function onSongChanges(changes) {
-  const uid = user.uid; let added = false;
-  for (const ch of changes) {
-    const d = ch.data, local = songById(ch.id);
-    if (ch.type === 'removed') {
-      if (local && local.owner === uid) {
-        await del('songs', local.id).catch(() => {});
-        songs = songs.filter(x => x !== local);
-        if (curId === local.id) { audio.pause(); audio.removeAttribute('src'); curId = null; updateNow(); }
-      }
-      continue;
-    }
-    if (!local) {
-      const st = { id: ch.id, name: d.name, artist: d.artist || undefined, album: d.album || undefined, lyrics: d.lyrics || undefined, dur: d.dur, size: d.size,
-        file: d.file, added: d.added, renamed: d.renamed, hasArt: d.hasArt, updatedAt: d.updatedAt, owner: uid, cloud: 'remote', blob: null, v2: true, v3: true };
-      Object.keys(st).forEach(k => st[k] === undefined && delete st[k]);
-      songs.push(st); await put('songs', st).catch(() => {}); added = true;
-    } else if ((d.updatedAt || 0) > (local.updatedAt || 0)) {
-      for (const k of ['name', 'artist', 'album', 'lyrics']) { if (d[k]) local[k] = d[k]; else delete local[k]; }
-      local.renamed = d.renamed; local.updatedAt = d.updatedAt; local.hasArt = d.hasArt;
-      await put('songs', local).catch(() => {});
-      if (local.id === curId) updateNow();
-    }
-  }
-  songs.sort((a, b) => (a.added || 0) - (b.added || 0));
-  softRender();
-  if (added) startDownloads();
-  if (infoOpen && songById(infoSongId)) infoSheet();
+async function startDownloads() {
+  if (dlPumping) return; dlPumping = true;
+  try { for (const s of songs.filter(x => !x.blob && x.fileId)) { if (!cloud()) break; try { await downloadSong(s); } catch {} } }
+  finally { dlPumping = false; }
 }
-async function onPlChanges(changes) {
-  const uid = user.uid;
-  for (const ch of changes) {
-    const d = ch.data, local = plById(ch.id);
-    if (ch.type === 'removed') {
-      if (local && local.owner === uid) { await del('playlists', local.id).catch(() => {}); playlists = playlists.filter(x => x !== local); if (openPl === local.id) openPl = null; }
-      continue;
-    }
-    if (!local) { const pl = { id: ch.id, name: d.name, songIds: d.songIds || [], created: d.created, updatedAt: d.updatedAt, owner: uid }; playlists.push(pl); await put('playlists', pl).catch(() => {}); }
-    else if ((d.updatedAt || 0) > (local.updatedAt || 0)) {
-      local.name = d.name; local.songIds = d.songIds || []; local.updatedAt = d.updatedAt;
-      await put('playlists', local).catch(() => {});
-      if (queueSrc === local.id) syncQueue(local.songIds);
-    }
-  }
-  playlists.sort((a, b) => (a.created || 0) - (b.created || 0));
-  softRender();
+// 연결이 만료됐으면, 음악이 멈춰 있을 때 조용히 다시 연결 (10분에 한 번까지)
+function maybeSilentReconnect() {
+  if (!driveOn() || tokenOk() || !navigator.onLine || !audio.paused || LS.get('silentBlocked', false)) return false;
+  if (Date.now() - LS.get('lastSilent', 0) < 10 * 60000) return false;
+  driveConnect(true); return true;
 }
 async function startCloud() {
   await localReady;
-  stopCloud();
-  const c = cloud(); if (!c) return;
-  const uid = user.uid;
-  cloudUnsubs.push(c.watchSongs(uid, ch => onSongChanges(ch).catch(() => {}), setCloudErr));
-  cloudUnsubs.push(c.watchPls(uid, ch => onPlChanges(ch).catch(() => {}), setCloudErr));
-  // 이 기기에만 있던 곡·플레이리스트 올리기
-  const newOnes = songs.filter(x => x.blob && (!x.owner || (x.owner === uid && x.cloud !== 'done')));
-  newOnes.forEach(cloudQueueUpload);
-  for (const p of playlists.filter(x => !x.owner)) await savePl(p);
-  if (newOnes.length) toast(`이 기기의 ${newOnes.length}곡을 계정에 올리는 중이에요`);
-  startDownloads();
+  if (!driveOn()) return;
+  if (tokenOk()) syncNow(); else maybeSilentReconnect();
 }
-function stopCloud() { cloudUnsubs.forEach(u => { try { u(); } catch {} }); cloudUnsubs = []; upQ = []; }
-addEventListener('online', () => { if (!cloud()) return; songs.filter(x => mine(x) && x.blob && x.cloud !== 'done').forEach(cloudQueueUpload); startDownloads(); });
+function stopCloud() { if (driveOn()) driveDisconnect(); }
+document.addEventListener('visibilitychange', () => { if (!document.hidden && driveOn()) { if (tokenOk()) syncNow(); else maybeSilentReconnect(); } });
+addEventListener('online', () => scheduleSync(500));
+setInterval(() => { if (!document.hidden && cloud()) syncNow(); }, 90000);
+localReady.then(() => { if (window.__driveJustLinked) toast('구글 드라이브를 연결했어요. 동기화를 시작해요'); if (driveOn()) startCloud(); });
 
 /* ---------- 재생 기록 저장 / 복원 ---------- */
 let restoring = false, lastSave = 0, pendingTime = null;
@@ -1595,23 +1674,6 @@ else {
       signOut: () => A.signOut(auth)
     };
     A.getRedirectResult(auth).catch(() => {});
-    try {
-      const F = await import(`https://www.gstatic.com/firebasejs/${V}/firebase-firestore.js`);
-      const S = await import(`https://www.gstatic.com/firebasejs/${V}/firebase-storage.js`);
-      const db = F.getFirestore(app), st = S.getStorage(app);
-      const changes = (snap, cb) => cb(snap.docChanges().map(c => ({ type: c.type, id: c.doc.id, data: c.doc.data() })));
-      window.FB.cloud = {
-        setSong: (uid, id, data) => F.setDoc(F.doc(db, 'users', uid, 'songs', id), data),
-        delSong: (uid, id) => F.deleteDoc(F.doc(db, 'users', uid, 'songs', id)),
-        setPl: (uid, id, data) => F.setDoc(F.doc(db, 'users', uid, 'playlists', id), data),
-        delPl: (uid, id) => F.deleteDoc(F.doc(db, 'users', uid, 'playlists', id)),
-        watchSongs: (uid, cb, err) => F.onSnapshot(F.collection(db, 'users', uid, 'songs'), s => changes(s, cb), err),
-        watchPls: (uid, cb, err) => F.onSnapshot(F.collection(db, 'users', uid, 'playlists'), s => changes(s, cb), err),
-        upload: (path, blob) => S.uploadBytes(S.ref(st, path), blob, { contentType: blob.type || 'application/octet-stream' }),
-        download: path => S.getBlob(S.ref(st, path)),
-        remove: path => S.deleteObject(S.ref(st, path)).catch(() => {})
-      };
-    } catch (e) { console.error('cloud', e); window.FB.cloud = null; }
     status('ready');
     A.onAuthStateChanged(auth, u => dispatchEvent(new CustomEvent('fb-user', { detail: u })));
   } catch (e) { console.error(e); status('error'); }

@@ -11,7 +11,7 @@
 - **리믹스** – 나이트코어, 슬로우+리버브, 베이스 부스트, 에코, 콘서트홀 + 속도·베이스·리버브·에코 직접 조절
 - **이어서 듣기** – 앱을 닫았다 열어도 마지막 곡·위치·설정 복원
 - **백그라운드 재생 & 잠금화면 조작** (Media Session API)
-- **로그인 & 계정 동기화** – 이메일 / Google 계정, 곡·이름·가사·플레이리스트를 계정에 저장해 다른 기기에서도 그대로 (Firebase Auth · Firestore · Storage)
+- **로그인 & 구글 드라이브 동기화** – 이메일 / Google 로그인, 곡·이름·가사·플레이리스트를 내 구글 드라이브(앱 전용 숨김 폴더)에 저장해 다른 기기에서도 그대로
 - **곡 정보 자동 읽기** – MP3 태그의 제목·가수·앨범·앨범 사진, 파일 이름의 `[영상ID]` 꼬리표 자동 정리
 - **검색 · 재생 시간 표시**
 - **플레이리스트 끌어서 순서 바꾸기**
@@ -26,32 +26,11 @@
 
 > 음악 파일은 각자 기기의 브라우저에만 저장되며, 서버로 업로드되지 않습니다.
 
-## 계정 동기화 설정 (Firebase)
-1. Firebase 콘솔에서 프로젝트를 **Blaze 요금제**로 업그레이드 (Storage 사용에 필요, 5GB까지 무료)
-2. **Firestore Database** 만들기 → 규칙:
-```
-rules_version = '2';
-service cloud.firestore {
-  match /databases/{database}/documents {
-    match /users/{uid}/{document=**} {
-      allow read, write: if request.auth != null && request.auth.uid == uid;
-    }
-  }
-}
-```
-3. **Storage** 시작하기 (무료 구간: US-CENTRAL1 / US-EAST1 / US-WEST1) → 규칙:
-```
-rules_version = '2';
-service firebase.storage {
-  match /b/{bucket}/o {
-    match /users/{uid}/{allPaths=**} {
-      allow read, delete: if request.auth != null && request.auth.uid == uid;
-      allow write: if request.auth != null && request.auth.uid == uid && request.resource.size < 200 * 1024 * 1024;
-    }
-  }
-}
-```
-4. Google Cloud Shell에서 CORS 설정 (브라우저에서 파일 받기용):
-```
-echo '[{"origin":["https://hoonse00000-ux.github.io"],"method":["GET"],"maxAgeSeconds":3600}]' > cors.json && gcloud storage buckets update gs://mp-3-e2ac0.firebasestorage.app --cors-file=cors.json
-```
+## 구글 드라이브 동기화 설정
+곡·앨범 사진·목록(`library.json`)을 각 사용자 구글 드라이브의 앱 전용 숨김 폴더(appDataFolder)에 저장합니다. 카드 등록이 필요 없습니다.
+1. Google Cloud 콘솔 (프로젝트 `mp-3-e2ac0`) → **API 및 서비스 → 라이브러리 → Google Drive API → 사용**
+2. **Google 인증 플랫폼(OAuth 동의 화면)** → 데이터 액세스에 범위 `.../auth/drive.appdata` 추가 → 대상에서 테스트 사용자로 본인 Gmail 추가 (또는 앱 게시)
+3. **사용자 인증 정보 → OAuth 2.0 클라이언트 ID (Web client)** →
+   - 승인된 JavaScript 원본: `https://hoonse00000-ux.github.io`
+   - 승인된 리디렉션 URI: `https://hoonse00000-ux.github.io/mp3-player/`
+4. 클라이언트 ID를 `index.html`의 `window.GOOGLE_CLIENT_ID`에 입력
