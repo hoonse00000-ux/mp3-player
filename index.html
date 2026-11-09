@@ -901,7 +901,7 @@ function infoSheet(tabArg) {
     };
   } else if (infoTab === 'notes') {
     const ins = INSTR[instrument] || INSTR.piano;
-    if (s.melody && (s.melody.v || 1) < 4) { delete s.melody; s.melAuto = 'pending'; put('songs', s).catch(() => {}); }   // 예전 방식 분석은 새 방식으로 다시
+    if (s.melody && (s.melody.v || 1) < 5) { delete s.melody; s.melAuto = 'pending'; put('songs', s).catch(() => {}); }   // 예전 방식 분석은 새 방식으로 다시
     const chips = `<div class="inschips">${Object.entries(INSTR).map(([k, v]) => `<button data-ins="${k}" class="${k === instrument ? 'on' : ''}">${v.label}</button>`).join('')}</div>`;
     if (!s.melody) {
       if (s.melAuto === 'none' || s.melAuto === 'error') body = chips + `<div class="nolyr" style="padding:26px 0 18px">${s.melAuto === 'none' ? '이 곡에서는 멜로디를 찾지 못했어요' : '분석하지 못했어요'}<br><span style="font-size:13px">반주만 있거나 소리가 너무 겹친 곡은 어려워요</span></div>
@@ -916,7 +916,7 @@ function infoSheet(tabArg) {
       body = chips + `<div class="notebig"><div class="nm" id="nBig">♪</div><div class="nsub" id="nSub">재생하면 지금 나오는 음을 보여 드려요</div>
           <div class="npos" id="nPos"></div>${ins.kbd ? '<svg class="kbd" id="nKbd" viewBox="0 0 280 70"></svg>' : ''}<div class="nnext" id="nNext"></div></div>
         <div class="score" id="nSeq">${scoreHTML(notes, ins)}</div>
-        <p class="note" style="margin-top:8px">${notes.length}개의 음 · 박자와 빠르기(♩≈)는 소리로 추정한 거라 실제 악보와 다를 수 있어요. 계이름 위 점은 높은 음, 아래 점은 낮은 음이에요. ${ins.strings ? '아래 ②1은 2번 줄 1프렛이에요. ' : ins.white ? '아래 숫자는 칼림바 표기예요. ' : ins.violin ? '아래 A1은 A현 1번 손가락이에요 (0=개방현, ↓반음 낮게, ↑반음 높게 짚기). ' : ins === INSTR.flute ? '아래는 음 이름이고, 위 운지는 T=왼손 엄지 · 숫자=손가락 · | 왼쪽은 왼손, 오른쪽은 오른손 · 4=새끼 · ↑=2옥타브예요. ' : '아래는 음 이름이에요. '}지나간 음은 노란색, 지금 음은 주황색으로 칠해져요. 계이름을 누르면 그 부분으로 이동해요.<br>반주가 많은 곡은 정확하지 않을 수 있어요.</p>
+        <p class="note" style="margin-top:8px">${notes.length}개의 음 · 박자표(2/4·3/4·4/4·6/8)와 빠르기(♩≈)는 소리로 추정한 거라 실제 악보와 다를 수 있어요. 계이름 위 점은 높은 음, 아래 점은 낮은 음이에요. ${ins.strings ? '아래 ②1은 2번 줄 1프렛이에요. ' : ins.white ? '아래 숫자는 칼림바 표기예요. ' : ins.violin ? '아래 A1은 A현 1번 손가락이에요 (0=개방현, ↓반음 낮게, ↑반음 높게 짚기). ' : ins === INSTR.flute ? '아래는 음 이름이고, 위 운지는 T=왼손 엄지 · 숫자=손가락 · | 왼쪽은 왼손, 오른쪽은 오른손 · 4=새끼 · ↑=2옥타브예요. ' : '아래는 음 이름이에요. '}지나간 음은 노란색, 지금 음은 주황색으로 칠해져요. 계이름을 누르면 그 부분으로 이동해요.<br>반주가 많은 곡은 정확하지 않을 수 있어요.</p>
         <div class="sheet-btns"><button class="btn" id="nRe">다시 분석</button></div>`;
       mount = b => {
         const all = [...b.querySelectorAll('.ng')], groups = notes.map(() => []);
@@ -986,11 +986,11 @@ function mapNotes(raw, ins) {
     const score = out * 100 + Math.abs(k) * 10 + (ins.center ? Math.abs(med + k * 12 - ins.center) / 12 : 0);
     if (score < bestScore) { bestScore = score; shift = k * 12; }
   }
-  return raw.map(([t, d, m0]) => {
+  return raw.map(([t, d, m0, a]) => {
     let m = m0 + shift;
     while (m < ins.lo) m += 12;
     while (m > ins.hi) m -= 12;
-    return { t, d, m };
+    return { t, d, m, a: a || 1 };
   });
 }
 // 오선 악보 (음표 대신 계이름 글자를 음 높이에 놓음)
@@ -1009,12 +1009,38 @@ function rhythmize(notes) {
     const sc = (s1 + 0.5 * s2 + 0.25 * sh) * pref;
     if (sc > bs) { bs = sc; bestL = L; }
   }
-  const beat = bestL / R, g = beat / 4;
+  const beat = bestL / R;
   let off = 0, os = -Infinity;
   for (let o = 0; o < beat; o += 0.005) { let sc = 0; notes.forEach(x => { const w = Math.min(1.5, x.d / 0.25) + 0.3, ph = (x.t - 0.015 - o) / beat; sc += (Math.cos(2 * Math.PI * ph) + 0.6 * Math.cos(4 * Math.PI * ph)) * w; }); if (sc > os) { os = sc; off = o; } }   // 긴 음이 박 위에 오도록
-  while (off > notes[0].t) off -= beat;
+  // ── 박자표 찾기 (8분음표 단위로 강세가 어떤 모양으로 돌아오는지 비교) ──
+  const fitErr = tau => notes.reduce((acc, x) => { const f = (x.t - 0.015 - off) / tau; return acc + Math.abs(f - Math.round(f)); }, 0) / notes.length;
+  const tau = fitErr(beat / 3) < fitErr(beat / 2) * 0.7 ? beat / 3 : beat / 2;      // 8분음표 길이
+  const nk = Math.ceil((end - off) / tau) + 8, A = new Float32Array(nk);
+  notes.forEach(x => { const f = (x.t - 0.015 - off) / tau, k = Math.round(f); if (k >= 0 && k < nk && Math.abs(f - k) < 0.3) A[k] += Math.min(3, x.d / tau) * (0.4 + Math.min(2, x.a || 1)); });
+  const METERS = [
+    { ts: [4, 4], w: [1, 0, .4, 0, .7, 0, .4, 0], prior: 1 },
+    { ts: [3, 4], w: [1, 0, .45, 0, .45, 0], prior: .97 },
+    { ts: [6, 8], w: [1, 0, 0, .7, 0, 0], prior: .97 },
+    { ts: [2, 4], w: [1, 0, .5, 0], prior: .8 }
+  ];
+  let bestM = METERS[0], bestPh = 0, bestSc = -Infinity;
+  for (const M of METERS) {
+    const L = M.w.length, mean = M.w.reduce((a, b) => a + b, 0) / L, wz = M.w.map(v => v - mean);
+    for (let ph = 0; ph < L; ph++) {
+      let sc = 0, cnt = 0;
+      for (let k = 0; k < nk; k++) { sc += A[k] * wz[((k - ph) % L + L) % L]; cnt++; }
+      sc = sc / Math.max(1, cnt) * M.prior;
+      if (sc > bestSc) { bestSc = sc; bestM = M; bestPh = ph; }
+    }
+  }
+  const ts = bestM.ts, compound = ts[1] === 8;
+  off += bestPh * tau;                                        // 마디 첫 박(센박)에 맞춤
+  const BAR = compound ? 12 : ts[0] * 4;                      // 한 마디 = 16분음표 칸 수
+  while (off > notes[0].t) off -= BAR * tau / 2;
+  const g = tau / 2;
+  const beatLen = compound ? 3 * tau : 2 * tau;
   // 음과 음 사이 간격을 단순한 음표 길이(8분·4분 등)를 우선해 맞추고, 실제 시간에서 너무 벗어나면 다시 맞춤
-  const PEN = { 1: 0.35, 2: 0, 3: 0.3, 4: 0, 6: 0.2, 8: 0, 12: 0.2, 16: 0 };
+  const PEN = compound ? { 1: 0.4, 2: 0, 3: 0.3, 4: 0.15, 6: 0, 12: 0 } : Object.fromEntries(Object.entries({ 1: 0.35, 2: 0, 3: 0.3, 4: 0, 6: 0.2, 8: 0, 12: 0.2, 16: 0 }).filter(([L]) => +L <= BAR));
   const snapLen = v => { if (v > 16) return Math.round(v); let best = 2, bv = Infinity; for (const [L, pen] of Object.entries(PEN)) { const c = Math.abs(v - L) / Math.max(1, L * 0.5) + pen; if (c < bv) { bv = c; best = +L; } } return best; };
   const T = notes.map(o => o.t - 0.015);                      // 감지가 살짝 늦는 만큼 보정
   const q = [];
@@ -1031,25 +1057,29 @@ function rhythmize(notes) {
     q.push({ i, s: st, e: en, m: o.m });
   });
   for (let k = 0; k + 1 < q.length; k++) if (q[k].e > q[k + 1].s) q[k].e = q[k + 1].s;
-  // 16칸(4/4박자 한 마디) 기준으로 쉼표를 넣고, 마디선·음표 길이에 맞게 나눔
-  const evs = []; let cur = Math.floor(q[0].s / 16) * 16;
+  // 한 마디(BAR칸) 기준으로 쉼표를 넣고, 마디선·음표 길이에 맞게 나눔
+  const evs = []; let cur = Math.floor(q[0].s / BAR) * BAR;
   q.forEach(x => { if (x.s > cur) evs.push({ rest: true, s: cur, e: x.s }); evs.push({ i: x.i, m: x.m, s: x.s, e: x.e }); cur = x.e; });
-  const last = Math.ceil(cur / 16) * 16; if (last > cur) evs.push({ rest: true, s: cur, e: last });
+  const last = Math.ceil(cur / BAR) * BAR; if (last > cur) evs.push({ rest: true, s: cur, e: last });
   const pieces = [];
   evs.forEach(ev => {
     let st = ev.s;
     while (st < ev.e) {
-      const segE = Math.min(ev.e, (Math.floor(st / 16) + 1) * 16);
+      const segE = Math.min(ev.e, (Math.floor(st / BAR) + 1) * BAR);
       let d = segE - st;
       while (d > 0) {
-        const pos = st % 16, v = [16, 12, 8, 6, 4, 3, 2, 1].find(v => v <= d && pos + v <= 16 && (v < 4 || pos % (v >= 8 ? 8 : 4) === 0 || v === 3 || v === 6 && pos % 2 === 0)) || 1;
+        const pos = st % BAR;
+        const fits = v => v <= d && pos + v <= BAR && (compound
+          ? (v === 12 ? pos === 0 : v === 6 ? pos % 6 === 0 : v >= 3 ? Math.floor(pos / 6) === Math.floor((pos + v - 1) / 6) : true)
+          : (v < 4 || pos % (v >= 8 ? 8 : 4) === 0 || v === 3 || v === 6 && pos % 2 === 0));
+        const v = (compound ? [12, 6, 4, 3, 2, 1] : [16, 12, 8, 6, 4, 3, 2, 1].filter(x => x <= BAR)).find(fits) || 1;
         pieces.push({ rest: !!ev.rest, i: ev.i, m: ev.m, s: st, d: v });
         st += v; d -= v;
       }
     }
   });
   for (let k = 0; k + 1 < pieces.length; k++) if (!pieces[k].rest && !pieces[k + 1].rest && pieces[k + 1].i === pieces[k].i) pieces[k].tie = true;
-  return { bpm: Math.round(60 / beat), pieces };
+  return { bpm: Math.round(60 / beatLen), pieces, BAR, ts, compound };
 }
 function scoreHTML(notes, ins) {
   if (!notes.length) return '';
@@ -1060,7 +1090,7 @@ function scoreHTML(notes, ins) {
   const W = 1000, Y0 = 132, SP = 6, H = Y0 + 92;
   const stepOf = m => { let st = staffStep(m + disp); while (st < -6) st += 7; while (st > 14) st -= 7; return st; };
   // 마디로 묶고, 마디들을 줄에 나눠 담기
-  const bars = []; rh.pieces.forEach(p => { const b = Math.floor(p.s / 16); (bars[b - Math.floor(rh.pieces[0].s / 16)] ||= []).push(p); });
+  const bars = []; rh.pieces.forEach(p => { const b = Math.floor(p.s / rh.BAR); (bars[b - Math.floor(rh.pieces[0].s / rh.BAR)] ||= []).push(p); });
   const pw = d => 24 + 15 * Math.sqrt(d);
   const barW = bar => 14 + bar.reduce((a, p) => a + pw(p.d), 0);
   const rows = []; let row = [], used = 0;
@@ -1079,8 +1109,8 @@ function scoreHTML(notes, ins) {
     // 높은음자리표 (직접 그림)
     const cx = 10;
     svg += `<path class="clef" d="M${cx + 15} ${Y0 + 16} C${cx + 6} ${Y0 + 20} ${cx + 3} ${Y0 + 8} ${cx + 11} ${Y0 + 6} M${cx + 15} ${Y0 + 16} L${cx + 19} ${Y0 - 58} C${cx + 21} ${Y0 - 70} ${cx + 31} ${Y0 - 64} ${cx + 25} ${Y0 - 50} C${cx + 18} ${Y0 - 35} ${cx + 1} ${Y0 - 29} ${cx + 3} ${Y0 - 12} C${cx + 5} ${Y0 + 3} ${cx + 30} ${Y0 + 2} ${cx + 29} ${Y0 - 14} C${cx + 28} ${Y0 - 27} ${cx + 11} ${Y0 - 27} ${cx + 13} ${Y0 - 14}"/>`;
-    if (ri === 0) svg += `<text class="tsig" x="66" y="${Y0 - 27}">4</text><text class="tsig" x="66" y="${Y0 - 3}">4</text>`;
-    svg += `<text class="tm" x="4" y="16">${fmt(notes[R[0].find(p => !p.rest)?.i ?? 0]?.t || 0)}${ri === 0 ? ` · ♩≈${rh.bpm}` : ''}</text>`;
+    if (ri === 0) svg += `<text class="tsig" x="66" y="${Y0 - 27}">${rh.ts[0]}</text><text class="tsig" x="66" y="${Y0 - 3}">${rh.ts[1]}</text>`;
+    svg += `<text class="tm" x="4" y="16">${fmt(notes[R[0].find(p => !p.rest)?.i ?? 0]?.t || 0)}${ri === 0 ? ` · ${rh.ts[0]}/${rh.ts[1]}박자 · ${rh.compound ? '♩.' : '♩'}≈${rh.bpm}` : ''}</text>`;
     let x = left;
     const placed = [];
     R.forEach((bar, bi) => {
@@ -1391,9 +1421,13 @@ async function runMelody(s) {
     close();
     // 노래하는 중 잠깐 음을 못 잡은 틈(0.4초 미만)은 앞 음을 이어서 채움 → 계이름이 갑자기 사라지지 않게
     for (let k = 0; k + 1 < notes.length; k++) if (notes[k + 1].t - notes[k].e < 0.4) notes[k].e = notes[k + 1].t;
+    // 음마다 소리 크기(강세) 기록 → 박자표 찾을 때 사용
+    const rmsAt = t => { const k = Math.min(frames.length - 1, Math.max(0, Math.round((t - frames[0].t) / hop))); return frames[k].rms; };
+    notes.forEach(n => { let sum = 0, c = 0; for (let t = n.t; t < Math.min(n.e, n.t + 0.15); t += hop) { sum += rmsAt(t); c++; } n.a = c ? sum / c : 0; });
+    const aMed = notes.map(n => n.a).sort((a, b) => a - b)[notes.length >> 1] || 1;
     const merged = notes;
     if (merged.length < 3) throw new Error('few');
-    s.melody = { v: 4, notes: merged.map(n => [+n.t.toFixed(3), +(n.e - n.t).toFixed(3), n.m]) };
+    s.melody = { v: 5, notes: merged.map(n => [+n.t.toFixed(3), +(n.e - n.t).toFixed(3), n.m, +(n.a / aMed).toFixed(2)]) };
     s.melAuto = 'done';
     await saveSong(s, true);
   } catch (e) {
