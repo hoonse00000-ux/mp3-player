@@ -885,6 +885,7 @@ function infoSheet(tabArg) {
     };
   } else if (infoTab === 'notes') {
     const ins = INSTR[instrument] || INSTR.piano;
+    if (s.melody && (s.melody.v || 1) < 3) { delete s.melody; s.melAuto = 'pending'; put('songs', s).catch(() => {}); }   // 예전 방식 분석은 새 방식으로 다시
     const chips = `<div class="inschips">${Object.entries(INSTR).map(([k, v]) => `<button data-ins="${k}" class="${k === instrument ? 'on' : ''}">${v.label}</button>`).join('')}</div>`;
     if (!s.melody) {
       if (s.melAuto === 'none' || s.melAuto === 'error') body = chips + `<div class="nolyr" style="padding:26px 0 18px">${s.melAuto === 'none' ? '이 곡에서는 멜로디를 찾지 못했어요' : '분석하지 못했어요'}<br><span style="font-size:13px">반주만 있거나 소리가 너무 겹친 곡은 어려워요</span></div>
@@ -1145,27 +1146,44 @@ async function isolateVocal(buf, onP) {
   const L = buf.getChannelData(0), R = buf.numberOfChannels > 1 ? buf.getChannelData(1) : L;
   const out = new Float32Array(n), win = new Float32Array(N);
   for (let i = 0; i < N; i++) win[i] = 0.5 - 0.5 * Math.cos(2 * Math.PI * i / N);
-  const kLo = Math.floor(140 * N / SR), kHi = Math.ceil(1500 * N / SR);
+  const kLo = Math.floor(140 * N / SR), kHi = Math.ceil(1500 * N / SR), kF = Math.min(N / 2 - 1, Math.ceil(3000 * N / SR));
+  // 소리 시작(음절·한 번 치는 소리)을 찾기 위한 12개 주파수 대역 (음높이가 흔들려도 덜 민감하게)
+  const NB = 12, bandOf = new Int8Array(N / 2).fill(-1);
+  for (let k = 1; k < N / 2; k++) { const f = k * SR / N; if (f >= 150 && f < 3000) bandOf[k] = Math.min(NB - 1, Math.floor(Math.log(f / 150) / Math.log(3000 / 150) * NB)); }
+  const flux = [], prev = new Float32Array(NB), be = new Float32Array(NB);
   const re = new Float32Array(N), im = new Float32Array(N), cr = new Float32Array(N), ci = new Float32Array(N);
-  let tk = performance.now();
+  let tk = performance.now(), first = true;
   for (let s0 = 0; s0 + N <= n; s0 += H) {
     for (let i = 0; i < N; i++) { re[i] = L[s0 + i] * win[i]; im[i] = R[s0 + i] * win[i]; }
     fft(re, im, false);                                   // 왼쪽 + i·오른쪽 을 한 번에
-    cr.fill(0); ci.fill(0);
-    for (let k = kLo; k <= kHi && k < N / 2; k++) {
-      const j = (N - k) % N;
+    cr.fill(0); ci.fill(0); be.fill(0);
+    for (let k = 1; k <= kF; k++) {
+      const j = N - k;
       const lr = (re[k] + re[j]) / 2, li = (im[k] - im[j]) / 2;       // 왼쪽 스펙트럼
       const rr = (im[k] + im[j]) / 2, ri = (re[j] - re[k]) / 2;       // 오른쪽 스펙트럼
       const mr = (lr + rr) / 2, mi = (li + ri) / 2, sr = (lr - rr) / 2, si = (li - ri) / 2;
-      const m2 = mr * mr + mi * mi, s2 = sr * sr + si * si, g = m2 / (m2 + 4 * s2 + 1e-12);
-      const g2 = g * g, edge = Math.min(1, (k - kLo + 1) / 3, (kHi - k + 1) / 3), w = g2 * g2 * edge;
-      cr[k] = mr * w; ci[k] = mi * w; cr[j] = mr * w; ci[j] = -mi * w;
+      const m2 = mr * mr + mi * mi, s2 = sr * sr + si * si, g = m2 / (m2 + 4 * s2 + 1e-12), g2 = g * g, w4 = g2 * g2;
+      if (bandOf[k] >= 0) be[bandOf[k]] += m2 * w4 * w4;
+      if (k >= kLo && k <= kHi) {
+        const edge = Math.min(1, (k - kLo + 1) / 3, (kHi - k + 1) / 3), w = w4 * edge;
+        cr[k] = mr * w; ci[k] = mi * w; cr[j] = mr * w; ci[j] = -mi * w;
+      }
     }
+    let fx = 0;
+    for (let b = 0; b < NB; b++) { const v = Math.log1p(1e4 * be[b]); if (!first && v > prev[b]) fx += v - prev[b]; prev[b] = v; }
+    flux.push(fx); first = false;
     fft(cr, ci, true);
-    for (let i = 0; i < N; i++) out[s0 + i] += cr[i] / N * win[i] * (2 / 3) * (H / (N / 4));
+    for (let i = 0; i < N; i++) out[s0 + i] += cr[i] / N * win[i] * (2 / 3);
     if (performance.now() - tk > 40) { onP(s0 / n); await new Promise(r => setTimeout(r, 0)); tk = performance.now(); }
   }
-  return out;
+  // 소리 시작 지점 고르기 (주변보다 뚜렷하게 튀는 곳)
+  const hop = H / SR, w = Math.round(0.25 / hop), mx = Math.max(1e-9, ...flux), onsets = [];
+  for (let i = 1; i < flux.length - 1; i++) {
+    if (flux[i] < flux[i - 1] || flux[i] < flux[i + 1]) continue;
+    const win2 = flux.slice(Math.max(0, i - w), Math.min(flux.length, i + w)).sort((a, b) => a - b);
+    if (flux[i] > win2[win2.length >> 1] * 1.8 + 0.05 * mx) { const t = (i + 1) * hop; if (!onsets.length || t - onsets[onsets.length - 1] > 0.07) onsets.push(t); }
+  }
+  return { x: out, onsets };
 }
 function showMelodyProgress() {
   const p = $('#nProg'), st = $('#nStat');
@@ -1196,12 +1214,13 @@ async function runMelody(s) {
     const OAC = window.OfflineAudioContext || window.webkitOfflineAudioContext;
     const raw = await new Promise(async (res, rej) => { const ab = await s.blob.arrayBuffer(); const c = new OAC(2, 1, SR); const pr = c.decodeAudioData(ab, res, rej); if (pr && pr.then) pr.then(res, rej); });
     upd(0.06, '목소리만 골라내는 중… 0%');
-    const x = await isolateVocal(raw, p => upd(0.06 + p * 0.3, `목소리만 골라내는 중… ${Math.round(p * 100)}%`));
+    const { x, onsets } = await isolateVocal(raw, p => upd(0.06 + p * 0.3, `목소리만 골라내는 중… ${Math.round(p * 100)}%`));
     upd(0.36);
     upd(0.36, '음높이를 찾는 중… 0%');
-    const W = 512, H = 160, tmin = Math.floor(SR / 1050), tmax = Math.ceil(SR / 75), dd = new Float32Array(tmax + 2);
+    // 음높이 추적 (YIN, 10ms 간격)
+    const W = 320, H = 80, tmin = Math.floor(SR / 1050), tmax = Math.ceil(SR / 75), dd = new Float32Array(tmax + 2);
     const frames = []; let tk = performance.now();
-    for (let i = 0; i + W + tmax < x.length; i += H) {
+    for (let i = 0; i + W + tmax + 2 < x.length; i += H) {
       let e = 0; for (let k = 0; k < W; k++) e += x[i + k] * x[i + k];
       const rms = Math.sqrt(e / W);
       let run = 0, best = -1;
@@ -1212,28 +1231,45 @@ async function runMelody(s) {
       for (let tau = tmin; tau <= tmax; tau++) if (dd[tau] < 0.12) { while (tau < tmax && dd[tau + 1] < dd[tau]) tau++; best = tau; break; }
       let f = 0;
       if (best > 0) { const a = dd[best - 1], b = dd[best], c = dd[best + 1], den = a + c - 2 * b; f = SR / (best + (den ? (a - c) / (2 * den) : 0)); }
-      frames.push({ t: i / SR, f, rms });
+      frames.push({ t: (i + W / 2) / SR, f, rms });
       if (performance.now() - tk > 40) { upd(0.36 + 0.6 * i / x.length, `음높이를 찾는 중… ${Math.round(i / x.length * 100)}%`); await new Promise(r => setTimeout(r, 0)); tk = performance.now(); }
     }
     upd(0.96, '음을 정리하는 중…');
-    const rs = frames.map(f => f.rms).filter(v => v > 0).sort((a, b) => a - b), gate = Math.max(0.004, (rs[Math.floor(rs.length * 0.35)] || 0) * 0.8);
+    const hop = H / SR;
+    const rs = frames.map(f => f.rms).filter(v => v > 0).sort((a, b) => a - b), gate = Math.max(1e-5, (rs[Math.floor(rs.length * 0.35)] || 0) * 0.8);
     const mid = frames.map(fr => fr.f > 0 && fr.rms > gate ? 69 + 12 * Math.log2(fr.f / 440) : null);
-    const sm = mid.map((v, i) => { if (v === null) return null; const w = []; for (let k = i - 2; k <= i + 2; k++) if (mid[k] != null) w.push(mid[k]); w.sort((a, b) => a - b); return w[w.length >> 1]; });
-    const hop = H / SR, notes = []; let cur = null;
+    const sm = mid.map((v, i) => { if (v === null) return null; const w = []; for (let k = i - 1; k <= i + 1; k++) if (mid[k] != null) w.push(mid[k]); w.sort((a, b) => a - b); return w[w.length >> 1]; });
+    // 음 나누기: ① 계이름이 바뀌면(30ms 이상 유지) 새 음 ② 같은 음이라도 소리를 다시 내면(음절·한 번 치기) 새 음
+    //           ③ 비브라토처럼 반음 안쪽으로 흔들리는 건 같은 음으로 봄
+    const MIN = 0.06, HYST = 0.65, notes = [];
+    let cur = null, cand = null, cnt = 0, cst = 0, oi = 0;
+    const close = () => { if (cur && cur.e - cur.t >= MIN) { cur.acc.sort((a, b) => a - b); cur.m = Math.round(cur.acc[cur.acc.length >> 1]); notes.push(cur); } };
+    const start = (t, v) => ({ t, e: t + hop, m: Math.round(v), acc: [v] });
     sm.forEach((v, i) => {
-      const t = frames[i].t, m = v === null ? null : Math.round(v);
-      if (m !== null && (m < 45 || m > 90)) return;
-      // 같은 음이 다시 시작되는 순간(소리가 갑자기 커짐)은 새 음으로 나눔
-      const onset = i > 1 && frames[i].rms > 1.7 * Math.min(frames[i - 1].rms, frames[i - 2].rms) && frames[i].rms > gate * 2;
-      if (m !== null && cur && m === cur.m && t - cur.e <= hop * 1.5 && !onset) { cur.e = t + hop; return; }
-      if (cur && cur.e - cur.t >= 0.1) notes.push(cur);
-      cur = m === null ? null : { t, e: t + hop, m };
+      const t = frames[i].t;
+      let split = false;
+      while (oi < onsets.length && onsets[oi] <= t) {
+        if (cur && onsets[oi] - cur.t >= MIN) {
+          const j0 = Math.max(0, i - Math.round(0.07 / hop)), j1 = Math.min(frames.length - 1, i + Math.round(0.04 / hop));
+          let dip = Infinity, peak = 0;
+          for (let j = j0; j <= i; j++) dip = Math.min(dip, frames[j].rms);
+          for (let j = i; j <= j1; j++) peak = Math.max(peak, frames[j].rms);
+          if (dip < 0.6 * peak) split = true;        // 소리가 살짝 줄었다가 다시 커짐 = 다시 낸 소리
+        }
+        oi++;
+      }
+      if (v === null || v < 44.5 || v > 90.5) { if (cur && t - cur.e > hop * 2) { close(); cur = null; } cand = null; return; }
+      if (!cur) { cur = start(t, v); return; }
+      if (split && Math.abs(v - cur.m) < HYST) { close(); cur = start(t, v); cand = null; return; }
+      if (Math.abs(v - cur.m) < HYST) { cur.e = t + hop; cur.acc.push(v); cand = null; return; }
+      const nm = Math.round(v);
+      if (cand === nm) cnt++; else { cand = nm; cnt = 1; cst = t; }
+      if (cnt >= 3 || split) { close(); cur = start(split ? t : cst, v); cand = null; }
     });
-    if (cur && cur.e - cur.t >= 0.1) notes.push(cur);
-    const merged = [];
-    for (const n of notes) { const L = merged[merged.length - 1]; if (L && L.m === n.m && n.t - L.e < 0.025) L.e = n.e; else merged.push({ ...n }); }
+    close();
+    const merged = notes;
     if (merged.length < 3) throw new Error('few');
-    s.melody = { v: 2, notes: merged.map(n => [+n.t.toFixed(3), +(n.e - n.t).toFixed(3), n.m]) };
+    s.melody = { v: 3, notes: merged.map(n => [+n.t.toFixed(3), +(n.e - n.t).toFixed(3), n.m]) };
     s.melAuto = 'done';
     await saveSong(s, true);
   } catch (e) {
