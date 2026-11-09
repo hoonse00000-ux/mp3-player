@@ -107,6 +107,22 @@ main{padding:8px 14px}
 .srow .sb{fill:var(--muted);font-size:15px;text-anchor:middle;font-weight:700}
 .srow .sb.on{fill:var(--accent)}
 .srow .sb.past{fill:#b8853a}
+.srow .clef{fill:none;stroke:var(--text);stroke-width:2.6;stroke-linecap:round}
+.srow .tsig{fill:var(--text);font-size:27px;font-weight:900;text-anchor:middle}
+.srow .bl{stroke:#7a6a5e;stroke-width:1.6}.srow .bl2{stroke:#7a6a5e;stroke-width:4.5}
+.srow .ng{cursor:pointer}
+.srow .hd,.srow .flag,.srow .dot{fill:var(--text)}
+.srow .hdo{fill:none;stroke:var(--text);stroke-width:2.3}
+.srow .stem{stroke:var(--text);stroke-width:1.8}
+.srow .tie{fill:none;stroke:var(--text);stroke-width:1.6}
+.srow .acc{fill:var(--text);font-size:19px;text-anchor:middle}
+.srow .rest{fill:#b5a79b}.srow .rests{fill:none;stroke:#b5a79b;stroke-width:2.6;stroke-linejoin:round;stroke-linecap:round}
+.srow .ng.past .hd,.srow .ng.past .flag,.srow .ng.past .dot,.srow .ng.past .acc{fill:var(--accent2)}
+.srow .ng.past .hdo{stroke:var(--accent2)}.srow .ng.past .stem,.srow .ng.past .tie{stroke:var(--accent2)}
+.srow .ng.past .st{fill:var(--accent2)}.srow .ng.past .sb{fill:#b8853a}
+.srow .ng.on .hd,.srow .ng.on .flag,.srow .ng.on .dot,.srow .ng.on .acc{fill:var(--accent)}
+.srow .ng.on .hdo{stroke:var(--accent);fill:rgba(255,122,69,.35)}.srow .ng.on .stem,.srow .ng.on .tie{stroke:var(--accent)}
+.srow .ng.on .st{fill:var(--accent);font-size:26px;font-weight:900}.srow .ng.on .sb{fill:var(--accent)}
 .srow .ph{stroke:var(--accent);stroke-width:3;stroke-linecap:round;opacity:0}
 .srow .ph.show{opacity:.85}
 .srow .od{fill:var(--text)}
@@ -885,7 +901,7 @@ function infoSheet(tabArg) {
     };
   } else if (infoTab === 'notes') {
     const ins = INSTR[instrument] || INSTR.piano;
-    if (s.melody && (s.melody.v || 1) < 3) { delete s.melody; s.melAuto = 'pending'; put('songs', s).catch(() => {}); }   // 예전 방식 분석은 새 방식으로 다시
+    if (s.melody && (s.melody.v || 1) < 4) { delete s.melody; s.melAuto = 'pending'; put('songs', s).catch(() => {}); }   // 예전 방식 분석은 새 방식으로 다시
     const chips = `<div class="inschips">${Object.entries(INSTR).map(([k, v]) => `<button data-ins="${k}" class="${k === instrument ? 'on' : ''}">${v.label}</button>`).join('')}</div>`;
     if (!s.melody) {
       if (s.melAuto === 'none' || s.melAuto === 'error') body = chips + `<div class="nolyr" style="padding:26px 0 18px">${s.melAuto === 'none' ? '이 곡에서는 멜로디를 찾지 못했어요' : '분석하지 못했어요'}<br><span style="font-size:13px">반주만 있거나 소리가 너무 겹친 곡은 어려워요</span></div>
@@ -900,13 +916,14 @@ function infoSheet(tabArg) {
       body = chips + `<div class="notebig"><div class="nm" id="nBig">♪</div><div class="nsub" id="nSub">재생하면 지금 나오는 음을 보여 드려요</div>
           <div class="npos" id="nPos"></div>${ins.kbd ? '<svg class="kbd" id="nKbd" viewBox="0 0 280 70"></svg>' : ''}<div class="nnext" id="nNext"></div></div>
         <div class="score" id="nSeq">${scoreHTML(notes, ins)}</div>
-        <p class="note" style="margin-top:8px">${notes.length}개의 음 · 오선 위 높이가 음의 높이예요. 글자 위 점은 높은 음, 아래 점은 낮은 음이에요. ${ins.strings ? '아래 ②1은 2번 줄 1프렛이에요. ' : ins.white ? '아래 숫자는 칼림바 표기예요. ' : ins.violin ? '아래 A1은 A현 1번 손가락이에요 (0=개방현, ↓반음 낮게, ↑반음 높게 짚기). ' : ins === INSTR.flute ? '아래는 음 이름이고, 위 운지는 T=왼손 엄지 · 숫자=손가락 · | 왼쪽은 왼손, 오른쪽은 오른손 · 4=새끼 · ↑=2옥타브예요. ' : '아래는 음 이름이에요. '}지나간 음은 노란색, 지금 음은 주황색으로 칠해져요. 계이름을 누르면 그 부분으로 이동해요.<br>반주가 많은 곡은 정확하지 않을 수 있어요.</p>
+        <p class="note" style="margin-top:8px">${notes.length}개의 음 · 박자와 빠르기(♩≈)는 소리로 추정한 거라 실제 악보와 다를 수 있어요. 계이름 위 점은 높은 음, 아래 점은 낮은 음이에요. ${ins.strings ? '아래 ②1은 2번 줄 1프렛이에요. ' : ins.white ? '아래 숫자는 칼림바 표기예요. ' : ins.violin ? '아래 A1은 A현 1번 손가락이에요 (0=개방현, ↓반음 낮게, ↑반음 높게 짚기). ' : ins === INSTR.flute ? '아래는 음 이름이고, 위 운지는 T=왼손 엄지 · 숫자=손가락 · | 왼쪽은 왼손, 오른쪽은 오른손 · 4=새끼 · ↑=2옥타브예요. ' : '아래는 음 이름이에요. '}지나간 음은 노란색, 지금 음은 주황색으로 칠해져요. 계이름을 누르면 그 부분으로 이동해요.<br>반주가 많은 곡은 정확하지 않을 수 있어요.</p>
         <div class="sheet-btns"><button class="btn" id="nRe">다시 분석</button></div>`;
       mount = b => {
-        const els = [...b.querySelectorAll('.st')];
-        els.forEach(el => el.onclick = () => { audio.currentTime = notes[+el.dataset.i].t; if (audio.paused) audio.play().catch(() => {}); });
+        const all = [...b.querySelectorAll('.ng')], groups = notes.map(() => []);
+        all.forEach(g => { groups[+g.dataset.i].push(g); g.onclick = () => { audio.currentTime = notes[+g.dataset.i].t; if (audio.paused) audio.play().catch(() => {}); }; });
+        const els = groups.map(G => G[0]);
         const rowEls = [...b.querySelectorAll('.srow')], rowOf = els.map(e => rowEls.indexOf(e.closest('.srow')));
-        noteState = { notes, els, idx: -2, past: 0, phRow: -1, phX: -1, rowEls, rowOf, xs: els.map(e => +e.dataset.x), bgs: els.map(e => e.previousElementSibling), subs: els.map(e => { const n = e.nextElementSibling; return n && n.classList.contains('sb') ? n : null; }), phs: rowEls.map(r => r.querySelector('.ph')), ins, box: b.querySelector('#nSeq'), big: b.querySelector('#nBig'), sub: b.querySelector('#nSub'), pos: b.querySelector('#nPos'), next: b.querySelector('#nNext'), kbd: b.querySelector('#nKbd') };
+        noteState = { notes, els, groups, idx: -2, past: 0, phRow: -1, phX: -1, rowEls, rowOf, xs: els.map(e => +e.dataset.x), phs: rowEls.map(r => r.querySelector('.ph')), ins, box: b.querySelector('#nSeq'), big: b.querySelector('#nBig'), sub: b.querySelector('#nSub'), pos: b.querySelector('#nPos'), next: b.querySelector('#nNext'), kbd: b.querySelector('#nKbd') };
         b.querySelector('#nRe').onclick = () => { delete s.melody; saveSong(s, true); queueMelody(s, true); infoSheet('notes'); };
         requestAnimationFrame(noteLoop);
       };
@@ -978,42 +995,146 @@ function mapNotes(raw, ins) {
 }
 // 오선 악보 (음표 대신 계이름 글자를 음 높이에 놓음)
 function staffStep(m) { const pc = ((m % 12) + 12) % 12; return (Math.floor(m / 12) - 1) * 7 + [0, 0, 1, 1, 2, 3, 3, 4, 4, 5, 5, 6][pc] - 30; }  // 미(E4) 아랫줄 = 0
+// 박자 찾기: 음이 시작되는 간격으로 빠르기(BPM)를 추정하고 16분음표 단위로 맞춤
+function rhythmize(notes) {
+  if (notes.length < 2) return null;
+  const end = notes[notes.length - 1].t + notes[notes.length - 1].d, R = 100, n = Math.ceil(end * R) + 3;
+  const sm = new Float32Array(n);
+  notes.forEach(o => { const c = Math.round(o.t * R), w = Math.min(1, o.d / 0.2) + 0.3; for (let k = -2; k <= 2; k++) { const j = c + k; if (j >= 0 && j < n) sm[j] += w * (1 - Math.abs(k) / 3); } });
+  let bestL = 50, bs = -1;
+  for (let L = 30; L <= 100; L++) {
+    let s1 = 0, s2 = 0, sh = 0;
+    for (let i = 0; i + 2 * L < n; i++) { const v = sm[i]; if (!v) continue; s1 += v * sm[i + L]; s2 += v * sm[i + 2 * L]; sh += v * sm[i + (L >> 1)]; }
+    const bpm = 6000 / L, pref = Math.exp(-0.5 * Math.pow(Math.log2(bpm / 110) / 0.7, 2));
+    const sc = (s1 + 0.5 * s2 + 0.25 * sh) * pref;
+    if (sc > bs) { bs = sc; bestL = L; }
+  }
+  const beat = bestL / R, g = beat / 4;
+  let off = 0, os = -Infinity;
+  for (let o = 0; o < beat; o += 0.005) { let sc = 0; notes.forEach(x => { const w = Math.min(1.5, x.d / 0.25) + 0.3, ph = (x.t - 0.015 - o) / beat; sc += (Math.cos(2 * Math.PI * ph) + 0.6 * Math.cos(4 * Math.PI * ph)) * w; }); if (sc > os) { os = sc; off = o; } }   // 긴 음이 박 위에 오도록
+  while (off > notes[0].t) off -= beat;
+  // 음과 음 사이 간격을 단순한 음표 길이(8분·4분 등)를 우선해 맞추고, 실제 시간에서 너무 벗어나면 다시 맞춤
+  const PEN = { 1: 0.35, 2: 0, 3: 0.3, 4: 0, 6: 0.2, 8: 0, 12: 0.2, 16: 0 };
+  const snapLen = v => { if (v > 16) return Math.round(v); let best = 2, bv = Infinity; for (const [L, pen] of Object.entries(PEN)) { const c = Math.abs(v - L) / Math.max(1, L * 0.5) + pen; if (c < bv) { bv = c; best = +L; } } return best; };
+  const T = notes.map(o => o.t - 0.015);                      // 감지가 살짝 늦는 만큼 보정
+  const q = [];
+  notes.forEach((o, i) => {
+    const abs = Math.max(0, Math.round((T[i] - off) / g));
+    let st = abs;
+    if (q.length) {
+      const pv = q[q.length - 1], cand = pv.s + snapLen((T[i] - T[i - 1]) / g);
+      st = Math.abs(cand - abs) <= 1 ? cand : abs;
+      if (st <= pv.s) st = pv.s + 1;
+      if (pv.e > st) pv.e = st;
+    }
+    let en = st + snapLen(Math.max(0.6, o.d / g));
+    q.push({ i, s: st, e: en, m: o.m });
+  });
+  for (let k = 0; k + 1 < q.length; k++) if (q[k].e > q[k + 1].s) q[k].e = q[k + 1].s;
+  // 16칸(4/4박자 한 마디) 기준으로 쉼표를 넣고, 마디선·음표 길이에 맞게 나눔
+  const evs = []; let cur = Math.floor(q[0].s / 16) * 16;
+  q.forEach(x => { if (x.s > cur) evs.push({ rest: true, s: cur, e: x.s }); evs.push({ i: x.i, m: x.m, s: x.s, e: x.e }); cur = x.e; });
+  const last = Math.ceil(cur / 16) * 16; if (last > cur) evs.push({ rest: true, s: cur, e: last });
+  const pieces = [];
+  evs.forEach(ev => {
+    let st = ev.s;
+    while (st < ev.e) {
+      const segE = Math.min(ev.e, (Math.floor(st / 16) + 1) * 16);
+      let d = segE - st;
+      while (d > 0) {
+        const pos = st % 16, v = [16, 12, 8, 6, 4, 3, 2, 1].find(v => v <= d && pos + v <= 16 && (v < 4 || pos % (v >= 8 ? 8 : 4) === 0 || v === 3 || v === 6 && pos % 2 === 0)) || 1;
+        pieces.push({ rest: !!ev.rest, i: ev.i, m: ev.m, s: st, d: v });
+        st += v; d -= v;
+      }
+    }
+  });
+  for (let k = 0; k + 1 < pieces.length; k++) if (!pieces[k].rest && !pieces[k + 1].rest && pieces[k + 1].i === pieces[k].i) pieces[k].tie = true;
+  return { bpm: Math.round(60 / beat), pieces };
+}
 function scoreHTML(notes, ins) {
   if (!notes.length) return '';
+  const rh = rhythmize(notes);
+  if (!rh) return '';
   const ms = notes.map(n => n.m).sort((a, b) => a - b), med = ms[ms.length >> 1];
-  const disp = Math.round((71 - med) / 12 - 0.25) * 12;          // 가운데 줄(시) 근처에 오도록 보기용으로만 옮김
-  const rows = []; let cur = [];
-  notes.forEach((n, i) => {
-    if (cur.length) { const pv = notes[i - 1], gap = n.t - (pv.t + pv.d); if (cur.length >= 16 || (cur.length >= 9 && gap > 0.6) || gap > 2.5) { rows.push(cur); cur = []; } }
-    cur.push(i);
+  const disp = Math.round((71 - med) / 12 - 0.25) * 12;
+  const W = 1000, Y0 = 132, SP = 6, H = Y0 + 92;
+  const stepOf = m => { let st = staffStep(m + disp); while (st < -6) st += 7; while (st > 14) st -= 7; return st; };
+  // 마디로 묶고, 마디들을 줄에 나눠 담기
+  const bars = []; rh.pieces.forEach(p => { const b = Math.floor(p.s / 16); (bars[b - Math.floor(rh.pieces[0].s / 16)] ||= []).push(p); });
+  const pw = d => 24 + 15 * Math.sqrt(d);
+  const barW = bar => 14 + bar.reduce((a, p) => a + pw(p.d), 0);
+  const rows = []; let row = [], used = 0;
+  bars.forEach((bar, bi) => {
+    const avail = W - 10 - (rows.length === 0 ? 92 : 56);
+    if (row.length && used + barW(bar) > avail) { rows.push(row); row = []; used = 0; }
+    row.push(bar); used += barW(bar);
   });
-  if (cur.length) rows.push(cur);
-  const W = 1000, Y0 = 126, H = Y0 + 80, SP = 6;               // Y0 = 아랫줄 y, 한 칸(반 줄 간격) = 6
-  return rows.map(R => {
-    const xs = []; let x = 70;
-    R.forEach((i, j) => { if (j) { const pv = notes[R[j - 1]], rest = notes[i].t - (pv.t + pv.d); x += 58 + Math.min(54, Math.max(0, rest) * 45); } xs.push(x); });
-    const last = xs[xs.length - 1], k = last > W - 40 ? (W - 110) / (last - 70) : 1;
+  if (row.length) rows.push(row);
+  const seen = new Set();
+  const out = rows.map((R, ri) => {
+    const left = ri === 0 ? 92 : 56, avail = W - 10 - left, tot = R.reduce((a, b) => a + barW(b), 0);
+    const k = Math.min(ri === rows.length - 1 ? 1.35 : 3, avail / tot);
     let svg = '';
-    for (let l = 0; l < 5; l++) svg += `<line class="sl" x1="44" x2="${W - 8}" y1="${Y0 - l * 12}" y2="${Y0 - l * 12}"/>`;
-    svg += `<line class="sl" x1="44" x2="44" y1="${Y0 - 48}" y2="${Y0}"/><line class="sl" x1="${W - 8}" x2="${W - 8}" y1="${Y0 - 48}" y2="${Y0}"/>`;
-    svg += `<text class="tm" x="4" y="16">${fmt(notes[R[0]].t)}</text>`;
-    R.forEach((i, j) => {
-      const n = notes[i], X = 70 + (xs[j] - 70) * k;
-      let st = staffStep(n.m + disp); while (st < -6) st += 7; while (st > 14) st -= 7;
-      const y = Y0 - st * SP;
-      for (let g = -2; g >= st; g -= 2) svg += `<line class="lg" x1="${X - 20}" x2="${X + 20}" y1="${Y0 - g * SP}" y2="${Y0 - g * SP}"/>`;
-      for (let g = 10; g <= st; g += 2) svg += `<line class="lg" x1="${X - 20}" x2="${X + 20}" y1="${Y0 - g * SP}" y2="${Y0 - g * SP}"/>`;
-      const oc = octClass(n.m, ins);
-      if (oc === 'hi' || oc === 'hi2') svg += `<circle class="od" cx="${oc === 'hi2' ? X - 4 : X}" cy="${y - 17}" r="2.6"/>` + (oc === 'hi2' ? `<circle class="od" cx="${X + 4}" cy="${y - 17}" r="2.6"/>` : '');
-      if (oc === 'lo') svg += `<circle class="od" cx="${X}" cy="${y + 17}" r="2.6"/>`;
-      svg += `<rect class="nb" x="${X - 21}" y="${y - 17}" width="42" height="34" rx="10"/>`;
-      svg += `<text class="st" data-i="${i}" data-x="${X.toFixed(1)}" x="${X}" y="${y}">${solfa(n.m)}</text>`;
-      const sl = subLabel(n.m, ins);
-      if (sl) svg += `<text class="sb" x="${X}" y="${Y0 + 66}">${sl}</text>`;
+    for (let l = 0; l < 5; l++) svg += `<line class="sl" x1="4" x2="${W - 6}" y1="${Y0 - l * 12}" y2="${Y0 - l * 12}"/>`;
+    // 높은음자리표 (직접 그림)
+    const cx = 10;
+    svg += `<path class="clef" d="M${cx + 15} ${Y0 + 16} C${cx + 6} ${Y0 + 20} ${cx + 3} ${Y0 + 8} ${cx + 11} ${Y0 + 6} M${cx + 15} ${Y0 + 16} L${cx + 19} ${Y0 - 58} C${cx + 21} ${Y0 - 70} ${cx + 31} ${Y0 - 64} ${cx + 25} ${Y0 - 50} C${cx + 18} ${Y0 - 35} ${cx + 1} ${Y0 - 29} ${cx + 3} ${Y0 - 12} C${cx + 5} ${Y0 + 3} ${cx + 30} ${Y0 + 2} ${cx + 29} ${Y0 - 14} C${cx + 28} ${Y0 - 27} ${cx + 11} ${Y0 - 27} ${cx + 13} ${Y0 - 14}"/>`;
+    if (ri === 0) svg += `<text class="tsig" x="66" y="${Y0 - 27}">4</text><text class="tsig" x="66" y="${Y0 - 3}">4</text>`;
+    svg += `<text class="tm" x="4" y="16">${fmt(notes[R[0].find(p => !p.rest)?.i ?? 0]?.t || 0)}${ri === 0 ? ` · ♩≈${rh.bpm}` : ''}</text>`;
+    let x = left;
+    const placed = [];
+    R.forEach((bar, bi) => {
+      x += 14 * k;
+      bar.forEach(p => { placed.push({ p, X: x + 8 }); x += pw(p.d) * k; });
+      const last = ri === rows.length - 1 && bi === R.length - 1;
+      svg += last ? `<line class="bl" x1="${x - 5}" x2="${x - 5}" y1="${Y0 - 48}" y2="${Y0}"/><line class="bl2" x1="${x}" x2="${x}" y1="${Y0 - 48}" y2="${Y0}"/>`
+        : `<line class="bl" x1="${x}" x2="${x}" y1="${Y0 - 48}" y2="${Y0}"/>`;
     });
-    svg += `<line class="ph" x1="70" x2="70" y1="${Y0 - 62}" y2="${Y0 + 16}"/>`;
+    placed.forEach(({ p, X }, pi) => {
+      if (p.rest) { svg += restSVG(p.d, X + 2, Y0); return; }
+      const n = notes[p.i], st = stepOf(n.m), y = Y0 - st * SP, first = !seen.has(p.i);
+      seen.add(p.i);
+      let g = '';
+      for (let gg = -2; gg >= st; gg -= 2) g += `<line class="lg" x1="${X - 12}" x2="${X + 12}" y1="${Y0 - gg * SP}" y2="${Y0 - gg * SP}"/>`;
+      for (let gg = 10; gg <= st; gg += 2) g += `<line class="lg" x1="${X - 12}" x2="${X + 12}" y1="${Y0 - gg * SP}" y2="${Y0 - gg * SP}"/>`;
+      if (SOLFA[((n.m % 12) + 12) % 12].includes('#')) g += `<text class="acc" x="${X - 17}" y="${y + 6}">♯</text>`;
+      g += `<ellipse class="${p.d >= 8 ? 'hdo' : 'hd'}" cx="${X}" cy="${y}" rx="7.2" ry="5.3" transform="rotate(-20 ${X} ${y})"/>`;
+      if (p.d < 16) {
+        const up = st < 4, sx = up ? X + 6.4 : X - 6.4, y2 = up ? y - 36 : y + 36;
+        g += `<line class="stem" x1="${sx}" x2="${sx}" y1="${y}" y2="${y2}"/>`;
+        const flags = p.d === 1 ? 2 : (p.d === 2 || p.d === 3) ? 1 : 0;
+        for (let f = 0; f < flags; f++) {
+          const fy = up ? y2 + f * 8 : y2 - f * 8;
+          g += up ? `<path class="flag" d="M${sx} ${fy} c1 8 12 9 9 22 c0 -8 -5 -12 -9 -14 z"/>` : `<path class="flag" d="M${sx} ${fy} c1 -8 12 -9 9 -22 c0 8 -5 12 -9 14 z"/>`;
+        }
+      }
+      if (p.d === 3 || p.d === 6 || p.d === 12) g += `<circle class="dot" cx="${X + 12}" cy="${st % 2 === 0 ? y - 3 : y}" r="2.4"/>`;
+      if (p.tie) {
+        const nx = placed[pi + 1] ? placed[pi + 1].X : W - 8, ty = st < 4 ? y + 9 : y - 9, dir = st < 4 ? 1 : -1;
+        g += `<path class="tie" d="M${X + 5} ${ty} Q${(X + nx) / 2} ${ty + 9 * dir} ${nx - 5} ${ty}"/>`;
+      }
+      if (first) {
+        const oc = octClass(n.m, ins);
+        g += `<text class="st" x="${X}" y="${Y0 + 58}">${solfa(n.m)}</text>`;
+        if (oc === 'hi' || oc === 'hi2') g += `<circle class="od" cx="${oc === 'hi2' ? X - 4 : X}" cy="${Y0 + 42}" r="2.4"/>` + (oc === 'hi2' ? `<circle class="od" cx="${X + 4}" cy="${Y0 + 42}" r="2.4"/>` : '');
+        if (oc === 'lo') g += `<circle class="od" cx="${X}" cy="${Y0 + 74}" r="2.4"/>`;
+        const sl = subLabel(n.m, ins);
+        if (sl) g += `<text class="sb" x="${X}" y="${Y0 + 86}">${sl}</text>`;
+      }
+      svg += `<g class="ng${first ? ' first' : ''}" data-i="${p.i}" data-x="${X.toFixed(1)}">${g}</g>`;
+    });
+    svg += `<line class="ph" x1="${left}" x2="${left}" y1="${Y0 - 60}" y2="${Y0 + 14}"/>`;
     return `<svg class="srow" viewBox="0 0 ${W} ${H}">${svg}</svg>`;
   }).join('');
+  return out;
+}
+// 쉼표 (직접 그림)
+function restSVG(d, x, Y0) {
+  if (d >= 16) return `<rect class="rest" x="${x - 8}" y="${Y0 - 36}" width="16" height="6"/>`;
+  if (d >= 8) return `<rect class="rest" x="${x - 8}" y="${Y0 - 30}" width="16" height="6"/>`;
+  if (d >= 4) return `<polyline class="rests" points="${x + 1},${Y0 - 42} ${x - 5},${Y0 - 33} ${x + 3},${Y0 - 25} ${x - 4},${Y0 - 17} ${x + 2},${Y0 - 11}"/>`;
+  const two = d < 2;
+  return `<circle class="rest" cx="${x - 3}" cy="${Y0 - 30}" r="3.2"/>${two ? `<circle class="rest" cx="${x - 5}" cy="${Y0 - 21}" r="3.2"/>` : ''}<path class="rests" d="M${x - 3} ${Y0 - 28} Q${x + 2} ${Y0 - 27} ${x + 5} ${Y0 - 33} L${x - 2} ${Y0 - (two ? 6 : 14)}"/>`;
 }
 // 플루트 운지: T=왼손 엄지(T♭=B♭ 레버), 숫자=손가락, | 왼쪽 왼손·오른쪽 오른손, 4=새끼, C/C#=발부분 키, ↑=2옥타브
 const FLUTE = { 60: 'T123 | 123C', 61: 'T123 | 123C#', 62: 'T123 | 123', 63: 'T123 | 1234', 64: 'T123 | 124', 65: 'T123 | 14', 66: 'T123 | 34',
@@ -1041,6 +1162,7 @@ function subLabel(m, ins) {
   if (ins.white) { const pc = ((m % 12) + 12) % 12, num = [1, 0, 2, 0, 3, 4, 0, 5, 0, 6, 0, 7][pc], o = Math.floor((m - 60) / 12); return num ? num + (o === 1 ? '˙' : o >= 2 ? '˙˙' : '') : '–'; }
   return letter(m);
 }
+
 function octClass(m, ins) { const o = Math.floor((m - ins.base) / 12); return o < 0 ? 'lo' : o === 1 ? 'hi' : o >= 2 ? 'hi2' : ''; }
 function octWord(m, ins) { const o = Math.floor((m - ins.base) / 12); return o < 0 ? '낮은 ' : o === 1 ? '높은 ' : o >= 2 ? '아주 높은 ' : ''; }
 function position(m, ins) {
@@ -1085,15 +1207,15 @@ function noteLoop() {
   const past = active >= 0 ? active : i + 1;
   if (past !== st.past) {
     const a = Math.min(past, st.past), b = Math.max(past, st.past), on = past > st.past;
-    for (let k = a; k < b; k++) { st.els[k].classList.toggle('past', on); if (st.subs[k]) st.subs[k].classList.toggle('past', on); }
+    for (let k = a; k < b; k++) st.groups[k].forEach(g => g.classList.toggle('past', on));
     st.past = past;
   }
   // 지금 음 강조
   if (active !== st.idx) {
-    if (st.idx >= 0) { st.els[st.idx].classList.remove('on'); st.bgs[st.idx].classList.remove('on'); if (st.subs[st.idx]) st.subs[st.idx].classList.remove('on'); }
+    if (st.idx >= 0) st.groups[st.idx].forEach(g => g.classList.remove('on'));
     if (active >= 0) {
       const n = N[active];
-      st.els[active].classList.add('on'); st.bgs[active].classList.add('on'); if (st.subs[active]) st.subs[active].classList.add('on');
+      st.groups[active].forEach(g => g.classList.add('on'));
       st.big.textContent = solfa(n.m);
       st.sub.textContent = `${octWord(n.m, st.ins)}${solfa(n.m)} · ${letter(n.m)}`;
       st.pos.textContent = position(n.m, st.ins);
@@ -1267,9 +1389,11 @@ async function runMelody(s) {
       if (cnt >= 3 || split) { close(); cur = start(split ? t : cst, v); cand = null; }
     });
     close();
+    // 노래하는 중 잠깐 음을 못 잡은 틈(0.4초 미만)은 앞 음을 이어서 채움 → 계이름이 갑자기 사라지지 않게
+    for (let k = 0; k + 1 < notes.length; k++) if (notes[k + 1].t - notes[k].e < 0.4) notes[k].e = notes[k + 1].t;
     const merged = notes;
     if (merged.length < 3) throw new Error('few');
-    s.melody = { v: 3, notes: merged.map(n => [+n.t.toFixed(3), +(n.e - n.t).toFixed(3), n.m]) };
+    s.melody = { v: 4, notes: merged.map(n => [+n.t.toFixed(3), +(n.e - n.t).toFixed(3), n.m]) };
     s.melAuto = 'done';
     await saveSong(s, true);
   } catch (e) {
