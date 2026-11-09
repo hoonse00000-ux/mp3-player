@@ -16,6 +16,7 @@ self.onmessage = async e => {
       const files = {};
       asr = await T.pipeline('automatic-speech-recognition', model, {
         device: 'wasm',
+        dtype: 'q8',             // 작게 줄인 모델 (메모리 절약)
         progress_callback: d => {
           if (d.status === 'progress' && d.total) {
             files[d.file] = [d.loaded, d.total];
