@@ -265,7 +265,7 @@ input[type=range]::-moz-range-thumb{width:16px;height:16px;border-radius:50%;bac
 <div id="drop">여기에 MP3를 놓으세요</div>
 
 <script>
-window.APP_VERSION = '20261111143906';   // 배포할 때 자동으로 바뀜 (bump-version.sh)
+window.APP_VERSION = '20261111144520';   // 배포할 때 자동으로 바뀜 (bump-version.sh)
 // Firebase 설정 (웹에 공개돼도 괜찮은 값이에요. 보안은 Firebase 콘솔의 규칙과 승인된 도메인으로 지켜요.)
 window.FIREBASE_CONFIG = {
   apiKey: "AIzaSyClt5JQwO1zA6C4uygTcCrnSG0dDHYQl1I",
@@ -296,21 +296,53 @@ const fmtSize = b => b >= 1048576 ? (b / 1048576).toFixed(1) + 'MB' : Math.max(1
 
 /* ---------- 저장소 (IndexedDB, 실패 시 메모리) ---------- */
 let db = null;
-const mem = { songs: new Map(), playlists: new Map(), kv: new Map() };
+const mem = { songs: new Map(), playlists: new Map(), kv: new Map(), audio: new Map() };
 function openDB() {
   return new Promise((res, rej) => {
     try {
-      const r = indexedDB.open('my-mp3-player', 2);
+      const r = indexedDB.open('my-mp3-player', 3);
       r.onupgradeneeded = () => {
         const d = r.result;
-        for (const n of ['songs', 'playlists', 'kv']) if (!d.objectStoreNames.contains(n)) d.createObjectStore(n, { keyPath: 'id' });
+        for (const n of ['songs', 'playlists', 'kv', 'audio']) if (!d.objectStoreNames.contains(n)) d.createObjectStore(n, { keyPath: 'id' });
       };
       r.onsuccess = () => res(r.result);
       r.onerror = () => rej(r.error);
     } catch (e) { rej(e); }
   });
 }
-function put(store, obj) {
+// 곡 파일은 아이패드 사파리에서 시간이 지나면 읽히지 않는 결함이 있는 'Blob' 대신
+// 원본 데이터(ArrayBuffer)로 따로 저장 → 곡 목록에는 이름·정보만, 소리는 'audio' 저장소에
+const artAB = new WeakMap();
+async function put(store, obj) {
+  if (store !== 'songs') return rawPut(store, obj);
+  const rec = { ...obj };
+  delete rec.blob; delete rec.art;
+  if (obj.art instanceof Blob) {
+    let ab = artAB.get(obj.art);
+    if (!ab) { try { ab = await obj.art.arrayBuffer(); artAB.set(obj.art, ab); } catch { ab = null; } }
+    if (ab) { rec.artData = ab; rec.artType = obj.art.type || 'image/jpeg'; } else { delete rec.artData; }
+  } else delete rec.artData;
+  return rawPut('songs', rec);
+}
+const blobCache = new Map();
+async function putAudio(id, blob) {
+  const ab = blob instanceof ArrayBuffer ? blob : await blob.arrayBuffer();
+  const type = (blob.type && blob.type !== 'application/octet-stream') ? blob.type : 'audio/mpeg';
+  await rawPut('audio', { id, data: ab, type });
+  cacheBlob(id, new Blob([ab], { type }));
+}
+function cacheBlob(id, b) { blobCache.delete(id); blobCache.set(id, b); while (blobCache.size > 3) blobCache.delete(blobCache.keys().next().value); }
+// 곡 소리 꺼내기 (메모리에 최근 3곡만 보관)
+async function getBlob(s) {
+  if (!s) throw new Error('nofile');
+  if (blobCache.has(s.id)) { const b = blobCache.get(s.id); cacheBlob(s.id, b); return b; }
+  const rec = await getOne('audio', s.id);
+  if (!rec || !rec.data || !rec.data.byteLength) throw new Error('nofile');
+  const b = new Blob([rec.data], { type: rec.type || 'audio/mpeg' });
+  cacheBlob(s.id, b);
+  return b;
+}
+function rawPut(store, obj) {
   if (!db) { mem[store].set(obj.id, obj); return Promise.resolve(); }
   return new Promise((res, rej) => {
     const t = db.transaction(store, 'readwrite');
@@ -407,7 +439,8 @@ async function addFiles(fileList) {
   let n = 0;
   for (const f of files) {
     const blob = new Blob([await f.arrayBuffer()], { type: f.type || 'audio/mpeg' });
-    const s = { id: uid(), name: cleanName(f.name.replace(/\.[^.]+$/, '')), file: f.name, blob, size: f.size, added: Date.now() };
+    const s = { id: uid(), name: cleanName(f.name.replace(/\.[^.]+$/, '')), file: f.name, size: f.size, added: Date.now(), hasAudio: true };
+    try { await putAudio(s.id, blob); } catch (err) { db = null; await putAudio(s.id, blob); }
     await enrich(s, true);
     try { await put('songs', s); } catch (err) { db = null; await put('songs', s); }
     songs.push(s); n++; queueLyrics(s); queueMelody(s);
@@ -522,7 +555,8 @@ function getDuration(blob) {
 }
 // 곡 정보 채우기 (새 곡: 태그 제목 우선 / 기존 곡: 직접 바꾼 이름은 그대로)
 async function enrich(s, isNew) {
-  const tags = await readTags(s.blob);
+  const blob = await getBlob(s);
+  const tags = await readTags(blob);
   if (tags.artist) s.artist = tags.artist;
   if (tags.album) s.album = tags.album;
   if (tags.art) s.art = tags.art;
@@ -531,18 +565,18 @@ async function enrich(s, isNew) {
     if (isNew || s.file) s.name = tags.title || cleanName((s.file || s.name).replace(/\.[^.]+$/, ''));
     else s.name = cleanName(s.name);
   }
-  if (!s.dur) s.dur = await getDuration(s.blob);
+  if (!s.dur) s.dur = await getDuration(blob);
   s.v2 = true; s.v3 = true;
 }
 async function upgradeOldSongs() {
-  const old = songs.filter(s => !s.v2 && s.blob);
+  const old = songs.filter(s => !s.v2 && s.hasAudio);
   for (const s of old) {
     try { await enrich(s, false); await saveSong(s, true); } catch {}
     render(); if (s.id === curId) updateNow();
   }
   if (old.length) toast(`${old.length}곡의 정보를 정리했어요`);
-  for (const s of songs.filter(x => !x.v3 && x.blob)) {   // 이미 넣은 곡의 가사 읽기
-    try { const t = await readTags(s.blob); if (t.lyrics && !s.lyrics) s.lyrics = t.lyrics; s.v3 = true; await saveSong(s, true); } catch {}
+  for (const s of songs.filter(x => !x.v3 && x.hasAudio)) {   // 이미 넣은 곡의 가사 읽기
+    try { const t = await readTags(await getBlob(s)); if (t.lyrics && !s.lyrics) s.lyrics = t.lyrics; s.v3 = true; await saveSong(s, true); } catch {}
   }
 }
 
@@ -623,8 +657,9 @@ async function convertVideos(files) {
       ui('vStat', 'MP3로 바꾸는 중… 0%');
       const mp3 = await encodeMp3(buf, p => { ui('vBar', 0.1 + p * 0.9); ui('vStat', `MP3로 바꾸는 중… ${Math.round(p * 100)}%`); });
       const base = f.name.replace(/\.[^.]+$/, '');
-      const s = { id: uid(), name: cleanName(base), file: base + '.mp3', blob: mp3, size: mp3.size, added: Date.now(), dur: buf.duration, v2: true, v3: true, fromVideo: true };
+      const s = { id: uid(), name: cleanName(base), file: base + '.mp3', size: mp3.size, added: Date.now(), dur: buf.duration, v2: true, v3: true, fromVideo: true, hasAudio: true };
       if (art) s.art = art;
+      try { await putAudio(s.id, mp3); } catch (err) { db = null; await putAudio(s.id, mp3); }
       try { await put('songs', s); } catch (err) { db = null; await put('songs', s); }
       songs.push(s); ok++; queueLyrics(s); queueMelody(s); lastId = s.id;
       render();
@@ -646,18 +681,19 @@ async function convertVideos(files) {
   if (ok) toast(`${ok}곡을 추가했어요`);
 }
 async function saveMp3(s) {
-  if (!s.blob) return toast('이 곡의 파일이 없어요');
+  let b = blobCache.get(s.id);
+  if (!b) { try { b = await getBlob(s); } catch { return toast('이 곡의 파일이 없어요'); } }
   const name = (s.name || 'music').replace(/[\\/:*?"<>|]/g, '_') + '.mp3';
   let file = null;
-  try { file = new File([s.blob], name, { type: 'audio/mpeg' }); } catch {}
+  try { file = new File([b], name, { type: 'audio/mpeg' }); } catch {}
   // 아이폰·아이패드: 공유 창 → "파일에 저장"
   if (file && navigator.canShare && navigator.canShare({ files: [file] })) {
     try { await navigator.share({ files: [file], title: s.name }); closeSheet(); return; }
-    catch (e) { if (e && e.name === 'AbortError') return; }
+    catch (e) { if (e && e.name === 'AbortError') return; if (e && e.name === 'NotAllowedError') return toast('준비됐어요. 한 번 더 눌러 주세요'); }
   }
   // 컴퓨터 브라우저: 바로 내려받기
   try {
-    const a = document.createElement('a'), u = URL.createObjectURL(s.blob);
+    const a = document.createElement('a'), u = URL.createObjectURL(b);
     a.href = u; a.download = name; a.rel = 'noopener';
     document.body.appendChild(a); a.click(); a.remove();
     setTimeout(() => URL.revokeObjectURL(u), 120000);
@@ -683,7 +719,7 @@ function songRow(s, i, ctx) {
     <button class="ic" data-menu="${s.id}" aria-label="메뉴">⋯</button>
   </div>`;
 }
-const subLine = s => [s.artist, s.dur ? fmt(s.dur) : fmtSize(s.size), s.blob ? '' : '파일 없음',
+const subLine = s => [s.artist, s.dur ? fmt(s.dur) : fmtSize(s.size), s.hasAudio ? '' : '파일 다시 연결 필요',
   aiCur && aiCur.id === s.id ? (aiCur.msg.startsWith('인터넷') ? '가사 찾는 중' : `가사 받아쓰는 중 ${Math.round(aiCur.p * 100)}%`) : s.lyrAuto === 'pending' && !s.lyrics ? '가사 대기 중' : '',
   melodyJob && melodyJob.id === s.id ? `계이름 분석 중 ${Math.round(melodyJob.p * 100)}%` : ''].filter(Boolean).join(' · ');
 const artUrls = new Map();
@@ -796,16 +832,19 @@ function render() {
 
 /* ---------- 곡 메뉴 ---------- */
 function songMenu(s) {
+  if (s.hasAudio) getBlob(s).catch(() => markBroken(s));     // 저장 버튼을 누르면 바로 공유 창이 뜨도록 미리 읽어 둠
   const inPl = tab === 'playlists' && openPl ? plById(openPl) : null;
   openSheet(`<p class="sheet-title">${esc(s.name)}</p>
     <button class="act-item" data-a="rename">${I_EDIT} 이름 바꾸기</button>
     <button class="act-item" data-a="addpl">${I_ADD} 플레이리스트에 담기</button>
     ${inPl ? `<button class="act-item" data-a="rmpl">${I_REM} 이 플레이리스트에서 빼기</button>` : ''}
+    ${!s.hasAudio ? `<button class="act-item" data-a="relink" style="color:var(--accent)">${I_ADD} 파일 다시 연결 (이름·가사·계이름 유지)</button>` : ''}
     <button class="act-item" data-a="save">${I_SAVE} MP3 파일로 저장</button>
     <button class="act-item danger" data-a="del">${I_DEL} 곡 삭제</button>`, b => {
     b.querySelectorAll('[data-a]').forEach(x => x.onclick = async () => {
       const a = x.dataset.a;
-      if (a === 'save') { saveMp3(s); return; }             // 공유 창은 누른 순간에 바로 열어야 해서 먼저 처리
+      if (a === 'save') { saveMp3(s); return; }
+      if (a === 'relink') { closeSheet(); relinkSong(s); return; }             // 공유 창은 누른 순간에 바로 열어야 해서 먼저 처리
       closeSheet();
       await new Promise(r => setTimeout(r, 230));
       if (a === 'rename') {
@@ -819,7 +858,7 @@ function songMenu(s) {
         saveMp3(s);
       } else if (a === 'del') {
         if (!await confirmBox(`'${s.name}'을(를) 삭제할까요? 모든 플레이리스트에서도 빠져요.`)) return;
-        await del('songs', s.id); cloudDeleteSong(s);
+        await del('songs', s.id); del('audio', s.id).catch(() => {}); blobCache.delete(s.id); cloudDeleteSong(s);
         songs = songs.filter(x => x !== s);
         for (const p of playlists) if (p.songIds.includes(s.id)) { p.songIds = p.songIds.filter(id => id !== s.id); await savePl(p); }
         if (curId === s.id) { audio.pause(); audio.removeAttribute('src'); curId = null; updateNow(); }
@@ -1378,7 +1417,7 @@ function showMelodyProgress() {
 // 자동 분석 대기열 (곡을 올리면 차례로 분석)
 let melQ = [], melBusy = false, melTick = 0;
 function queueMelody(s, first) {
-  if (!s || s.melody || !s.blob) return;
+  if (!s || s.melody || !s.hasAudio) return;
   s.melAuto = 'pending'; put('songs', s).catch(() => {});
   melQ = melQ.filter(id => id !== s.id);
   first ? melQ.unshift(s.id) : melQ.push(s.id);
@@ -1386,17 +1425,17 @@ function queueMelody(s, first) {
 }
 async function pumpMelody() {
   if (melBusy) return; melBusy = true;
-  while (melQ.length) { const s = songById(melQ.shift()); if (s && !s.melody && s.blob) await runMelody(s); }
+  while (melQ.length) { const s = songById(melQ.shift()); if (s && !s.melody && s.hasAudio) await runMelody(s); }
   melBusy = false;
 }
-function resumeMelody(delay) { setTimeout(() => songs.filter(x => x.melAuto === 'pending' && !x.melody && x.blob).forEach(x => queueMelody(x)), delay); }
+function resumeMelody(delay) { setTimeout(() => songs.filter(x => x.melAuto === 'pending' && !x.melody && x.hasAudio).forEach(x => queueMelody(x)), delay); }
 async function runMelody(s) {
   melodyJob = { id: s.id, p: 0, msg: '곡을 읽는 중…' }; showMelodyProgress(); softRender();
   const upd = (p, msg) => { melodyJob.p = p; if (msg) melodyJob.msg = msg; if (infoOpen && infoTab === 'notes' && infoSongId === s.id) showMelodyProgress(); if (Date.now() - melTick > 1500) { melTick = Date.now(); softRender(); } };
   try {
     const SR = 8000;
     const OAC = window.OfflineAudioContext || window.webkitOfflineAudioContext;
-    const raw = await new Promise(async (res, rej) => { const ab = await s.blob.arrayBuffer(); const c = new OAC(2, 1, SR); const pr = c.decodeAudioData(ab, res, rej); if (pr && pr.then) pr.then(res, rej); });
+    const raw = await new Promise(async (res, rej) => { const ab = await (await getBlob(s)).arrayBuffer(); const c = new OAC(2, 1, SR); const pr = c.decodeAudioData(ab, res, rej); if (pr && pr.then) pr.then(res, rej); });
     upd(0.06, '목소리만 골라내는 중… 0%');
     const { x, onsets } = await isolateVocal(raw, p => upd(0.06 + p * 0.3, `목소리만 골라내는 중… ${Math.round(p * 100)}%`));
     upd(0.36);
@@ -1597,7 +1636,7 @@ function langSheet(s) {
   });
 }
 function queueLyrics(s) {
-  if (!s || s.lyrics || !s.blob) return;
+  if (!s || s.lyrics || !s.hasAudio) return;
   s.lyrAuto = 'pending'; put('songs', s).catch(() => {});
   if (!aiQ.includes(s.id)) aiQ.push(s.id);
   pumpLyrics();
@@ -1607,7 +1646,7 @@ async function pumpLyrics() {
   while (aiQ.length) {
     await waitVisible();
     const s = songById(aiQ.shift());
-    if (!s || s.lyrics || !s.blob) continue;
+    if (!s || s.lyrics || !s.hasAudio) continue;
     // 1) 인터넷 가사 모음에서 정확한 가사 찾기 (언어를 직접 고른 경우엔 AI로 바로)
     if (!s.webTried && (!s.lang || s.lang === 'auto') && navigator.onLine) {
       aiCur = { id: s.id, p: 0, msg: '인터넷에서 가사 찾는 중…' }; softRender();
@@ -1640,7 +1679,7 @@ async function transcribe(s) {
   if (infoOpen && infoTab === 'lyrics' && infoSongId === s.id) infoSheet('lyrics');
   try {
     const OAC = window.OfflineAudioContext || window.webkitOfflineAudioContext;
-    const buf = await new Promise(async (res, rej) => { const ab = await s.blob.arrayBuffer(); const c = new OAC(1, 1, 16000); const pr = c.decodeAudioData(ab, res, rej); if (pr && pr.then) pr.then(res, rej); });
+    const buf = await new Promise(async (res, rej) => { const ab = await (await getBlob(s)).arrayBuffer(); const c = new OAC(1, 1, 16000); const pr = c.decodeAudioData(ab, res, rej); if (pr && pr.then) pr.then(res, rej); });
     // 저음 반주(베이스·드럼)를 줄여 목소리가 잘 들리게
     const oc = new OAC(1, buf.length, 16000), src = oc.createBufferSource(); src.buffer = buf;
     const hp = oc.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 110;
@@ -1683,7 +1722,7 @@ async function transcribe(s) {
   }
 }
 function resumeLyrics(delay = 0) {
-  const go = () => songs.filter(x => x.lyrAuto === 'pending' && !x.lyrics && x.blob).forEach(queueLyrics);
+  const go = () => songs.filter(x => x.lyrAuto === 'pending' && !x.lyrics && x.hasAudio).forEach(queueLyrics);
   if (delay) setTimeout(go, delay); else go();
 }
 addEventListener('online', () => { aiNetWarned = false; resumeLyrics(); });
@@ -1815,11 +1854,11 @@ function syncQueue(ids) { // 큐 원본이 바뀌었을 때 현재 곡 위치 �
 async function loadAndPlay() {
   const s = songById(queue[order[pos]]);
   if (!s) return;
-  if (!s.blob) {
-    toast('이 곡의 파일이 없어요. 다시 추가해 주세요'); return;
-  }
+  let blob;
+  try { if (!s.hasAudio) throw 0; blob = await getBlob(s); }
+  catch { markBroken(s); toast('이 곡의 파일이 없어요. ⋯ → 파일 다시 연결로 복구해 주세요'); return; }
   if (curUrl) URL.revokeObjectURL(curUrl);
-  curUrl = URL.createObjectURL(s.blob);
+  curUrl = URL.createObjectURL(blob);
   curId = s.id; pendingTime = null;
   audio.src = curUrl;
   applyFx();
@@ -1904,11 +1943,10 @@ async function togglePlay() {
 }
 // 저장된 곡 파일을 새로 읽어 재생기에 다시 연결 (파일 연결이 끊겼거나 기기가 파일을 놓친 경우 복구)
 async function freshSource(s) {
-  if (!s || !s.blob) throw new Error('nofile');
-  const ab = await s.blob.arrayBuffer();                       // 읽을 수 없으면 여기서 실패
-  const type = s.blob.type && s.blob.type !== 'application/octet-stream' ? s.blob.type : 'audio/mpeg';
-  const nb = new Blob([ab], { type });
-  s.blob = nb; put('songs', s).catch(() => {});                // 고친 파일로 다시 저장
+  if (!s || !s.hasAudio) throw new Error('nofile');
+  blobCache.delete(s.id);                                      // 메모리 사본을 버리고 저장소에서 새로 읽음
+  let nb;
+  try { nb = await getBlob(s); } catch (e) { markBroken(s); throw e; }
   const t = audio.currentTime || 0;
   if (curUrl) URL.revokeObjectURL(curUrl);
   curUrl = URL.createObjectURL(nb);
@@ -2229,7 +2267,45 @@ async function saveSong(s, quiet) { if (!quiet) s.updatedAt = Date.now(); await 
 async function savePl(p) { p.updatedAt = Date.now(); await put('playlists', p); }
 function cloudDeleteSong() {} function cloudDeletePl() {} function cloudQueueUpload() {} function stopCloud() {}
 const cloud = () => null;
-const downloadSong = s => s.blob ? Promise.resolve(s) : Promise.reject(new Error('missing'));
+const downloadSong = s => s.hasAudio ? Promise.resolve(s) : Promise.reject(new Error('missing'));
+
+function markBroken(s) { if (!s || !s.hasAudio) return; s.hasAudio = false; s.broken = true; put('songs', s).catch(() => {}); softRender(); }
+// 파일을 잃어버린 곡에 MP3를 다시 연결 (이름·가사·계이름·플레이리스트는 그대로)
+function relinkSong(s) {
+  const inp = document.createElement('input');
+  inp.type = 'file'; inp.accept = 'audio/mpeg,audio/mp3,.mp3,audio/*';
+  inp.onchange = async () => {
+    const f = inp.files && inp.files[0]; if (!f) return;
+    try {
+      await putAudio(s.id, new Blob([await f.arrayBuffer()], { type: f.type || 'audio/mpeg' }));
+      s.hasAudio = true; s.broken = false; s.size = f.size;
+      if (!s.dur) { try { s.dur = await getDuration(await getBlob(s)); } catch {} }
+      await put('songs', s);
+      render(); toast('파일을 다시 연결했어요');
+    } catch { toast('파일을 연결하지 못했어요'); }
+  };
+  inp.click();
+}
+
+/* ---------- 예전 저장 방식(Blob) → 새 방식(원본 데이터)으로 옮기기 ---------- */
+async function migrateSongs() {
+  let moved = 0, lost = 0;
+  for (const s of songs) {
+    if (s.artData && !(s.art instanceof Blob)) { s.art = new Blob([s.artData], { type: s.artType || 'image/jpeg' }); artAB.set(s.art, s.artData); }
+    delete s.artData; delete s.artType;
+    if (s.blob instanceof Blob) {                                // 예전 방식으로 저장된 곡
+      try { await putAudio(s.id, s.blob); s.hasAudio = true; s.broken = false; moved++; }
+      catch { s.hasAudio = false; s.broken = true; lost++; }
+      if (s.art instanceof Blob && !artAB.get(s.art)) { try { artAB.set(s.art, await s.art.arrayBuffer()); } catch { delete s.art; } }
+      delete s.blob;
+      await put('songs', s).catch(() => {});
+    } else if (s.hasAudio === undefined) {
+      s.hasAudio = !!(await getOne('audio', s.id).catch(() => null)); if (!s.hasAudio) s.broken = true;
+    }
+  }
+  if (lost) setTimeout(() => toast(`${lost}곡의 파일을 기기가 잃어버렸어요. 곡 옆 ⋯ → 파일 다시 연결로 복구할 수 있어요`), 1500);
+  else if (moved) setTimeout(() => toast('곡 파일을 더 안전한 방식으로 옮겼어요'), 1500);
+}
 
 /* ---------- 재생 기록 저장 / 복원 ---------- */
 let restoring = false, lastSave = 0, pendingTime = null;
@@ -2271,7 +2347,7 @@ async function restoreState() {
       else { queue = st.queue.filter(id => songById(id)); buildOrder(Math.max(0, queue.indexOf(s.id))); }
       if (queue[order[pos]] !== s.id) { const ci = queue.indexOf(s.id); if (ci < 0) { queue.push(s.id); order.push(queue.length - 1); pos = order.length - 1; } else pos = order.indexOf(ci); }
       curId = s.id;
-      if (s.blob) { curUrl = URL.createObjectURL(s.blob); audio.src = curUrl; }
+      try { if (s.hasAudio) { const b = await getBlob(s); curUrl = URL.createObjectURL(b); audio.src = curUrl; } } catch { markBroken(s); }
       const t = +st.time || 0; pendingTime = t;
       audio.addEventListener('loadedmetadata', () => {
         if (t > 0 && t < audio.duration - 1) audio.currentTime = t;
@@ -2372,6 +2448,7 @@ setTimeout(checkUpdate, 4000);
   try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist(); } catch {}
   try {
     songs = (await all('songs')).sort((a, b) => a.added - b.added);
+    await migrateSongs();
     playlists = (await all('playlists')).sort((a, b) => a.created - b.created);
   } catch { db = null; songs = []; playlists = []; }
   $('#shuffleBtn').innerHTML = SHUF;
