@@ -265,7 +265,7 @@ input[type=range]::-moz-range-thumb{width:16px;height:16px;border-radius:50%;bac
 <div id="drop">여기에 MP3를 놓으세요</div>
 
 <script>
-window.APP_VERSION = '20261111143430';   // 배포할 때 자동으로 바뀜 (bump-version.sh)
+window.APP_VERSION = '20261111143906';   // 배포할 때 자동으로 바뀜 (bump-version.sh)
 // Firebase 설정 (웹에 공개돼도 괜찮은 값이에요. 보안은 Firebase 콘솔의 규칙과 승인된 도메인으로 지켜요.)
 window.FIREBASE_CONFIG = {
   apiKey: "AIzaSyClt5JQwO1zA6C4uygTcCrnSG0dDHYQl1I",
@@ -1879,16 +1879,43 @@ async function togglePlay() {
   if (ctx && ctx.state !== 'running') ctx.resume().catch(() => {});      // 기다리지 않음 (아이패드에서 멈추는 원인)
   try { await audio.play(); }
   catch (e) {
-    const s = songById(curId);
-    if (s && s.blob && wantPlay) {
-      const t = audio.currentTime || 0;
-      if (curUrl) URL.revokeObjectURL(curUrl);
-      curUrl = URL.createObjectURL(s.blob); audio.src = curUrl; applyFx();
-      try { await new Promise((res, rej) => { audio.addEventListener('loadedmetadata', res, { once: true }); audio.addEventListener('error', rej, { once: true }); setTimeout(res, 1500); }); if (t) audio.currentTime = t; await audio.play(); }
-      catch { showPlayState(false); toast('재생하지 못했어요. 한 번 더 눌러 주세요'); }
+    let err = e;
+    // 잠깐 끊긴 경우(AbortError)는 그 자리에서 바로 한 번 더
+    if (err && err.name === 'AbortError') { try { await audio.play(); err = null; } catch (e2) { err = e2; } }
+    if (err && wantPlay) {
+      // 받아쓰기 AI가 메모리를 많이 쓰고 있으면 잠시 멈춰서 재생에 양보 (나중에 이어서 받아씀)
+      if (aiWorker && aiReject) { aiWorker.terminate(); aiWorker = null; aiReject(new Error('hidden')); }
+      const s = songById(curId);
+      try { await freshSource(s); }
+      catch (bad) {
+        showPlayState(false); wantPlay = null;
+        toast(bad && bad.message === 'decode' ? '이 곡 파일을 재생할 수 없어요. 곡을 다시 추가해 주세요' : '곡 파일을 읽을 수 없어요. 곡을 다시 추가해 주세요');
+        return;
+      }
+      try { await audio.play(); }
+      catch (e3) {
+        // 준비하느라 시간이 걸려 기기가 막은 경우 → 다음 한 번의 터치로 바로 재생됨
+        showPlayState(false);
+        toast(e3 && e3.name === 'NotAllowedError' ? '준비됐어요. 재생 버튼을 한 번 더 눌러 주세요' : `재생하지 못했어요 (${(e3 && e3.name) || '알 수 없는 오류'})`);
+      }
     }
   }
   wantPlay = null; setPlayIcon();
+}
+// 저장된 곡 파일을 새로 읽어 재생기에 다시 연결 (파일 연결이 끊겼거나 기기가 파일을 놓친 경우 복구)
+async function freshSource(s) {
+  if (!s || !s.blob) throw new Error('nofile');
+  const ab = await s.blob.arrayBuffer();                       // 읽을 수 없으면 여기서 실패
+  const type = s.blob.type && s.blob.type !== 'application/octet-stream' ? s.blob.type : 'audio/mpeg';
+  const nb = new Blob([ab], { type });
+  s.blob = nb; put('songs', s).catch(() => {});                // 고친 파일로 다시 저장
+  const t = audio.currentTime || 0;
+  if (curUrl) URL.revokeObjectURL(curUrl);
+  curUrl = URL.createObjectURL(nb);
+  audio.src = curUrl; audio.load(); applyFx();
+  await new Promise(res => { audio.addEventListener('loadedmetadata', res, { once: true }); audio.addEventListener('error', res, { once: true }); setTimeout(res, 3000); });
+  if (audio.error) throw new Error('decode');
+  if (t) { try { audio.currentTime = t; } catch {} }
 }
 $('#playBtn').addEventListener('click', togglePlay);
 $('#nextBtn').onclick = () => next(false);
