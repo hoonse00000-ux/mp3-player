@@ -210,6 +210,8 @@ input[type=range]::-moz-range-thumb{width:16px;height:16px;border-radius:50%;bac
 .slider label b{color:var(--accent2);font-variant-numeric:tabular-nums}
 .toggle{display:flex;justify-content:space-between;align-items:center;font-size:14px;margin:14px 0}
 .note{font-size:12px;color:var(--muted);line-height:1.6}
+#updBar{position:fixed;left:50%;top:max(12px,env(safe-area-inset-top));transform:translateX(-50%);z-index:35;background:var(--accent2);color:#1a0d06;padding:9px 10px 9px 16px;border-radius:999px;font-size:14px;font-weight:700;display:flex;align-items:center;gap:10px;box-shadow:0 6px 20px rgba(0,0,0,.4);white-space:nowrap}
+#updBar button{background:#1a0d06;color:var(--accent2);border-radius:999px;padding:6px 12px;font-weight:700;font-size:13px}
 #toast{position:fixed;left:50%;bottom:220px;transform:translateX(-50%);background:var(--text);color:var(--bg);padding:10px 16px;border-radius:999px;font-size:13px;font-weight:500;z-index:30;opacity:0;transition:opacity .2s;pointer-events:none;white-space:nowrap}
 #toast.show{opacity:1}
 #drop{position:fixed;inset:0;z-index:40;background:rgba(255,122,69,.15);border:3px dashed var(--accent);display:none;place-items:center;font-size:20px;font-weight:700}
@@ -263,6 +265,7 @@ input[type=range]::-moz-range-thumb{width:16px;height:16px;border-radius:50%;bac
 <div id="drop">여기에 MP3를 놓으세요</div>
 
 <script>
+window.APP_VERSION = '20261111140637';   // 배포할 때 자동으로 바뀜 (bump-version.sh)
 // Firebase 설정 (웹에 공개돼도 괜찮은 값이에요. 보안은 Firebase 콘솔의 규칙과 승인된 도메인으로 지켜요.)
 window.FIREBASE_CONFIG = {
   apiKey: "AIzaSyClt5JQwO1zA6C4uygTcCrnSG0dDHYQl1I",
@@ -2284,8 +2287,43 @@ document.addEventListener('visibilitychange', () => {
 
 /* ---------- 오프라인 실행 (서비스 워커) ---------- */
 if ('serviceWorker' in navigator && location.protocol === 'https:') {
-  addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
+  addEventListener('load', () => navigator.serviceWorker.register('sw.js').then(reg => { swReg = reg; }).catch(() => {}));
 }
+/* ---------- 새 버전 자동 반영 (홈 화면 앱도 껐다 켤 필요 없이) ---------- */
+let swReg = null, pendingVersion = null;
+function applyUpdate() {
+  if (!pendingVersion) return;
+  LS.set('reloadedFor', pendingVersion);
+  saveState();
+  if (swReg && swReg.waiting) swReg.waiting.postMessage('skipWaiting');
+  location.reload();
+}
+function showUpdateBanner() {
+  if (document.getElementById('updBar')) return;
+  const bar = document.createElement('div');
+  bar.id = 'updBar';
+  bar.innerHTML = '새 버전이 준비됐어요 <button>지금 적용</button>';
+  bar.querySelector('button').onclick = applyUpdate;
+  document.body.appendChild(bar);
+}
+async function checkUpdate() {
+  if (!navigator.onLine || (location.protocol !== 'https:' && location.hostname !== 'localhost')) return;
+  try {
+    if (swReg) swReg.update().catch(() => {});
+    const r = await fetch('version.json?t=' + Date.now(), { cache: 'no-store' });
+    if (!r.ok) return;
+    const v = String((await r.json()).v || '');
+    if (!v || v === window.APP_VERSION) return;
+    if (LS.get('reloadedFor', '') === v) return;           // 이미 한 번 새로고침했는데도 같으면 반복하지 않음
+    pendingVersion = v;
+    if (audio.paused && !document.hidden && !aiCur && !melodyJob) applyUpdate();   // 음악이 멈춰 있으면 바로 적용
+    else showUpdateBanner();                                                    // 재생 중이면 알림만
+  } catch {}
+}
+audio.addEventListener('pause', () => { if (pendingVersion && userPaused && !document.hidden) setTimeout(() => { if (audio.paused) applyUpdate(); }, 800); });
+document.addEventListener('visibilitychange', () => { if (!document.hidden) checkUpdate(); });
+setInterval(() => { if (!document.hidden) checkUpdate(); }, 3 * 60 * 1000);
+setTimeout(checkUpdate, 4000);
 
 /* ---------- 시작 ---------- */
 (async () => {
