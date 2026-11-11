@@ -1,7 +1,7 @@
 // 내 음악 - 오프라인 실행용 서비스 워커
 // 앱 파일은 "네트워크 우선"(항상 최신 버전, 인터넷이 없을 때만 저장본 사용)
 // 글꼴·Firebase 라이브러리는 "저장본 우선"
-const CACHE = 'mp3p-v3';
+const CACHE = 'mp3p-v4';
 const CORE = ['./', './index.html', './manifest.json', './icon-180.png', './icon-192.png', './icon-512.png', './lame.min.js', './lyrics-worker.js'];
 
 self.addEventListener('install', e => {

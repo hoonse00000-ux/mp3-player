@@ -3,7 +3,7 @@ const LIB = 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3';
 let T = null, asr = null, loaded = '';
 
 // 노래 없는 부분에서 Whisper가 자주 지어내는 문장
-const JUNK = /시청해\s*주셔서|구독(과|,)?\s*좋아요|좋아요(와|,)?\s*구독|MBC\s*뉴스|KBS|SBS|자막\s*(제공|제작)|한글\s*자막|다음\s*영상에서|thank(s| you) for watching|subscribe|字幕|ご視聴|by\s+[A-Za-z]+\s*$/i;
+const JUNK = /시청해\s*주셔서|구독(과|,)?\s*좋아요|좋아요(와|,)?\s*구독|MBC\s*뉴스|KBS|SBS|자막\s*(제공|제작)|한글\s*자막|다음\s*영상에서|thank(s| you) for watching|please subscribe|字幕|ご視聴ありがとう/i;
 
 const LANG_TOK = { korean: '<|ko|>', japanese: '<|ja|>', english: '<|en|>', chinese: '<|zh|>' };
 // 노래 언어 알아내기: Whisper가 첫 토큰으로 어떤 언어를 고르는지 확인 (소리가 가장 큰 30초 구간 사용)
@@ -56,25 +56,34 @@ self.onmessage = async e => {
       postMessage({ type: 'lang', lang: language });
     }
     postMessage({ type: 'asr', p: 0, partial: '' });
-    const SR = 16000, WIN = 30 * SR, STEP = 26 * SR, OVER = 4, lines = [];   // 4초씩 겹쳐 들어서 구간 경계에서 가사가 잘리지 않게
+    const SR = 16000, WIN = 30 * SR, STEP = 25 * SR, lines = [];   // 5초씩 겹쳐 들어서 구간 경계에서 가사가 잘리지 않게
+    // 곡 전체 소리 크기 기준 (조용한 노래 부분을 건너뛰지 않도록 곡에 맞춰 판단)
+    let tot = 0; for (let i = 0; i < audio.length; i += 16) tot += audio[i] * audio[i];
+    const songRms = Math.sqrt(tot / Math.max(1, audio.length / 16));
+    let lastEnd = -1;
     let partial = '';
     for (let off = 0; off < audio.length; off += STEP) {
       const part = audio.subarray(off, Math.min(audio.length, off + WIN));
       // 거의 소리가 없는 부분은 건너뛰기
       let e2 = 0; for (let i = 0; i < part.length; i += 4) e2 += part[i] * part[i];
-      if (Math.sqrt(e2 / (part.length / 4)) > 0.003 && part.length > SR) {
-        const opts = { task: 'transcribe', return_timestamps: true };
+      if (Math.sqrt(e2 / (part.length / 4)) > songRms * 0.12 && part.length > SR * 0.8) {
+        const opts = { task: 'transcribe', return_timestamps: true, no_repeat_ngram_size: 0 };
         opts.language = language;          // 언어를 꼭 지정 (지정하지 않으면 영어로 처리됨)
         const out = await asr(part, opts);
         const chunks = out.chunks && out.chunks.length ? out.chunks : [{ timestamp: [0, part.length / SR], text: out.text || '' }];
         for (const c of chunks) {
           const text = (c.text || '').trim();
           if (!text || JUNK.test(text) || /^[\s.,!?♪~\-]*$/.test(text)) continue;
-          if (off > 0 && c.timestamp && c.timestamp[0] != null && c.timestamp[0] < OVER) continue;   // 앞 구간에서 이미 들은 부분
           const t = off / SR + (c.timestamp && c.timestamp[0] != null ? c.timestamp[0] : 0);
+          const tEnd = off / SR + (c.timestamp && c.timestamp[1] != null ? c.timestamp[1] : (c.timestamp ? c.timestamp[0] + 2 : 2));
+          // 앞 구간과 겹치는 5초 안에서, 이미 적은 줄이 끝난 시간보다 앞쪽이면 건너뜀 (경계에서 잘린 줄은 살림)
+          if (off > 0 && tEnd <= lastEnd + 0.3) continue;
           const prev = lines[lines.length - 1];
-          if (prev && prev.text === text) continue;            // 같은 줄 반복 제거
+          // 겹치는 구간 때문에 같은 줄이 두 번 잡힌 경우만 제거 (후렴처럼 반복되는 가사는 그대로 둠)
+          if (prev && prev.text === text && t - prev.t < 1.5) continue;
+          if (prev && t < prev.t + 0.2) continue;
           lines.push({ t: Math.max(0, +t.toFixed(2)), text });
+          lastEnd = Math.max(lastEnd, tEnd);
           partial += text + '\n';
         }
       }
