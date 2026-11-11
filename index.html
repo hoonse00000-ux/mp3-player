@@ -265,7 +265,7 @@ input[type=range]::-moz-range-thumb{width:16px;height:16px;border-radius:50%;bac
 <div id="drop">여기에 MP3를 놓으세요</div>
 
 <script>
-window.APP_VERSION = '20261111140637';   // 배포할 때 자동으로 바뀜 (bump-version.sh)
+window.APP_VERSION = '20261111143430';   // 배포할 때 자동으로 바뀜 (bump-version.sh)
 // Firebase 설정 (웹에 공개돼도 괜찮은 값이에요. 보안은 Firebase 콘솔의 규칙과 승인된 도메인으로 지켜요.)
 window.FIREBASE_CONFIG = {
   apiKey: "AIzaSyClt5JQwO1zA6C4uygTcCrnSG0dDHYQl1I",
@@ -2274,16 +2274,30 @@ try { if (navigator.audioSession) navigator.audioSession.type = 'playback'; } ca
 const waitVisible = () => document.hidden ? new Promise(r => { const f = () => { if (!document.hidden) { document.removeEventListener('visibilitychange', f); r(); } }; document.addEventListener('visibilitychange', f); }) : Promise.resolve();
 const idle = () => document.hidden ? waitVisible() : new Promise(r => setTimeout(r, 0));
 // 사용자가 직접 멈춘 게 아닌데 멈추면(다른 앱으로 갈 때 브라우저가 멈춤) 다시 재생
+// 다른 영상·통화 등이 소리를 가져가면 멈추고, 그게 끝나면 같은 자리부터 이어서 재생
 let userPaused = false, bgInterrupted = false;
+const AS = navigator.audioSession;                         // 아이폰·아이패드 사파리: 다른 소리에 끊겼는지 알려 줌
+const otherAudio = () => !!(AS && AS.state === 'interrupted');
+function resumeIfInterrupted() {
+  if (bgInterrupted && audio.paused && !userPaused && curId && !otherAudio()) audio.play().catch(() => {});
+}
 audio.addEventListener('play', () => { userPaused = false; bgInterrupted = false; });
 audio.addEventListener('pause', () => {
   if (userPaused || audio.ended || !curId) return;
-  if (document.hidden) { bgInterrupted = true; setTimeout(() => { if (bgInterrupted && audio.paused) audio.play().catch(() => {}); }, 400); }
+  bgInterrupted = true;                                    // 내가 멈춘 게 아님 → 나중에 이어서 재생
+  // 다른 소리 때문이 아니라 브라우저가 그냥 멈춘 거면(앱 전환 등) 바로 다시 재생.
+  // 다른 영상이 소리를 가져간 경우엔 그 영상을 방해하지 않도록 기다림
+  if (AS && AS.state && AS.state !== 'interrupted') setTimeout(() => { if (!otherAudio()) resumeIfInterrupted(); }, 600);
 });
+// 다른 영상이 끝나서 소리를 돌려받으면 이어서 재생
+try { if (AS && 'onstatechange' in AS) AS.addEventListener('statechange', () => { if (AS.state !== 'interrupted') setTimeout(resumeIfInterrupted, 500); }); } catch {}
+// 이 앱으로 돌아오면 이어서 재생
 document.addEventListener('visibilitychange', () => {
-  if (!document.hidden && bgInterrupted && audio.paused && !userPaused) { audio.play().catch(() => {}); }
+  if (!document.hidden) resumeIfInterrupted();
   if (document.hidden && !audio.paused && 'mediaSession' in navigator) { try { navigator.mediaSession.playbackState = 'playing'; } catch {} }
 });
+addEventListener('focus', resumeIfInterrupted);
+addEventListener('pageshow', resumeIfInterrupted);
 
 /* ---------- 오프라인 실행 (서비스 워커) ---------- */
 if ('serviceWorker' in navigator && location.protocol === 'https:') {
