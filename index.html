@@ -64,6 +64,7 @@ main{padding:8px 14px}
 .sub{font-size:12px;color:var(--muted);margin-top:2px}
 .ic{width:36px;height:36px;border-radius:10px;display:grid;place-items:center;color:var(--muted);flex-shrink:0;font-size:18px}
 .ic:active{background:var(--panel2)}
+.thumb img{width:100%;height:100%;object-fit:cover;display:block}.thumb .ico-s{width:22px;height:22px}
 .thumb{width:44px;height:44px;border-radius:10px;overflow:hidden;background:linear-gradient(135deg,#3b2a20,#251c16);display:grid;place-items:center;color:var(--accent);flex-shrink:0;position:relative;font-size:18px}
 .thumb img{width:100%;height:100%;object-fit:cover;display:block}
 .thumb-eq{position:absolute;inset:0;background:rgba(0,0,0,.55);display:grid;place-items:center}
@@ -236,7 +237,7 @@ input[type=range]::-moz-range-thumb{width:16px;height:16px;border-radius:50%;bac
 <section id="player">
   <div class="ptop">
     <canvas id="viz"></canvas>
-    <div class="thumb pthumb" id="pArt"><span>♪</span></div>
+    <div class="thumb pthumb" id="pArt"><svg class="ico-s" viewBox="0 0 24 24"><path d="M9 18V6l10-2v12"/><circle cx="6.5" cy="18" r="2.5"/><circle cx="16.5" cy="16" r="2.5"/></svg></div>
     <div class="ptitle">
       <div class="name" id="pName">재생 중인 곡 없음</div>
       <div class="sub" id="pSub">곡을 눌러 재생하세요</div>
@@ -265,7 +266,7 @@ input[type=range]::-moz-range-thumb{width:16px;height:16px;border-radius:50%;bac
 <div id="drop">여기에 MP3를 놓으세요</div>
 
 <script>
-window.APP_VERSION = '20261111145427';   // 배포할 때 자동으로 바뀜 (bump-version.sh)
+window.APP_VERSION = '20261111151014';   // 배포할 때 자동으로 바뀜 (bump-version.sh)
 // Firebase 설정 (웹에 공개돼도 괜찮은 값이에요. 보안은 Firebase 콘솔의 규칙과 승인된 도메인으로 지켜요.)
 window.FIREBASE_CONFIG = {
   apiKey: "AIzaSyClt5JQwO1zA6C4uygTcCrnSG0dDHYQl1I",
@@ -448,7 +449,7 @@ async function addFiles(fileList) {
     if (!back || !back.data || back.data.byteLength !== blob.size) { db = null; await putAudio(s.id, blob); }
     await enrich(s, true);
     try { await put('songs', s); } catch (err) { db = null; await put('songs', s); }
-    songs.push(s); n++; queueLyrics(s); queueMelody(s);
+    songs.push(s); n++; queueLyrics(s); queueMelody(s); queueArt(s);
   }
   toast([n ? `${n}곡을 저장했어요` : '', relinked ? `${relinked}곡은 기존 곡에 다시 연결했어요` : ''].filter(Boolean).join(' · '));
   render();
@@ -666,7 +667,7 @@ async function convertVideos(files) {
       if (art) s.art = art;
       try { await putAudio(s.id, mp3); } catch (err) { db = null; await putAudio(s.id, mp3); }
       try { await put('songs', s); } catch (err) { db = null; await put('songs', s); }
-      songs.push(s); ok++; queueLyrics(s); queueMelody(s); lastId = s.id;
+      songs.push(s); ok++; queueLyrics(s); queueMelody(s); queueArt(s); lastId = s.id;
       render();
     } catch (e) {
       const why = e.message === 'big' ? '영상이 너무 커요 (1.5GB 이하만 가능)' : e.message === 'decode' ? '소리가 없거나 지원하지 않는 형식이에요' : e.message === 'lame' ? '변환 도구를 불러오지 못했어요 (인터넷 확인)' : '메모리가 부족하거나 처리 중 오류가 났어요';
@@ -719,7 +720,7 @@ function songRow(s, i, ctx) {
   const art = artUrl(s);
   return `<div class="row ${playing ? 'playing' : ''}" data-play="${i}" data-idx="${i}">
     ${ctx === 'pl' ? '<button class="handle" aria-label="끌어서 순서 바꾸기">≡</button>' : ''}
-    <div class="thumb">${art ? `<img src="${art}" alt="">` : '<span>♪</span>'}${playing ? `<div class="thumb-eq">${eqHTML}</div>` : ''}</div>
+    <div class="thumb">${art ? `<img src="${art}" alt="">` : NOTE_ICO}${playing ? `<div class="thumb-eq">${eqHTML}</div>` : ''}</div>
     <div class="info"><div class="name">${esc(s.name)}</div><div class="sub">${esc(subLine(s))}</div></div>
     <button class="ic" data-menu="${s.id}" aria-label="메뉴">⋯</button>
   </div>`;
@@ -727,13 +728,50 @@ function songRow(s, i, ctx) {
 const subLine = s => [s.artist, s.dur ? fmt(s.dur) : fmtSize(s.size), s.hasAudio ? '' : '파일 다시 연결 필요',
   aiCur && aiCur.id === s.id ? (aiCur.msg.startsWith('인터넷') ? '가사 찾는 중' : `가사 받아쓰는 중 ${Math.round(aiCur.p * 100)}%`) : s.lyrAuto === 'pending' && !s.lyrics ? '가사 대기 중' : '',
   melodyJob && melodyJob.id === s.id ? `계이름 분석 중 ${Math.round(melodyJob.p * 100)}%` : ''].filter(Boolean).join(' · ');
-const artUrls = new Map();
+// 앨범 사진: 작은 그림(글자 데이터)으로 바꿔 저장 → 기기가 사진 파일을 잃어버려도 썸네일은 그대로
+const artUrls = new WeakMap();
 function artUrl(s) {
-  if (!s || !s.art) return '';
-  let u = artUrls.get(s.id);
-  if (!u) { try { u = URL.createObjectURL(s.art); artUrls.set(s.id, u); } catch { return ''; } }
+  if (!s) return '';
+  if (s.thumb) return s.thumb;
+  if (!(s.art instanceof Blob)) return '';
+  let u = artUrls.get(s.art);
+  if (!u) { try { u = URL.createObjectURL(s.art); artUrls.set(s.art, u); } catch { return ''; } }
   return u;
 }
+async function makeThumb(blob) {
+  const u = URL.createObjectURL(blob);
+  try {
+    const img = new Image();
+    await new Promise((ok, no) => { img.onload = ok; img.onerror = no; img.src = u; });
+    if (!img.naturalWidth) throw 0;
+    const S = 512, c = document.createElement('canvas'); c.width = c.height = S;
+    const k = Math.max(S / img.naturalWidth, S / img.naturalHeight), w = img.naturalWidth * k, h = img.naturalHeight * k;
+    c.getContext('2d').drawImage(img, (S - w) / 2, (S - h) / 2, w, h);
+    return c.toDataURL('image/jpeg', 0.8);
+  } finally { URL.revokeObjectURL(u); }
+}
+const artQ = []; let artBusy = false;
+function queueArt(s, force) { if (!s || (s.thumb && !force)) return; if (force) s.artTried = false; if (!artQ.includes(s)) artQ.push(s); runArt(); }
+async function runArt() {
+  if (artBusy) return; artBusy = true;
+  while (artQ.length) {
+    const s = artQ.shift();
+    if (!songs.includes(s) || s.thumb) continue;
+    let t = '';
+    if (s.art instanceof Blob) { try { t = await makeThumb(s.art); } catch {} }
+    if (!t && s.hasAudio && !s.artTried) {                       // 사진이 없거나 깨졌으면 곡 파일에서 다시 꺼내기
+      try { const tags = await readTags(await getBlob(s)); if (tags.art) { s.art = tags.art; t = await makeThumb(tags.art); } } catch {}
+      s.artTried = true;
+    }
+    if (t) s.thumb = t;
+    else delete s.art;
+    await put('songs', s).catch(() => {});
+    if (t) softRender();
+    await new Promise(r => setTimeout(r, 30));
+  }
+  artBusy = false;
+}
+const NOTE_ICO = '<svg class="ico-s" viewBox="0 0 24 24"><path d="M9 18V6l10-2v12"/><circle cx="6.5" cy="18" r="2.5"/><circle cx="16.5" cy="16" r="2.5"/></svg>';
 
 /* 끌어서 순서 바꾸기 */
 function enableDrag(box, onDone) {
@@ -929,7 +967,7 @@ function infoSheet(tabArg) {
   if (!s) return toast('재생 중인 곡이 없어요');
   if (typeof tabArg === 'string') infoTab = tabArg;
   const art = artUrl(s);
-  const head = `<div class="ihead"><div class="thumb">${art ? `<img src="${art}" alt="">` : '<span>♪</span>'}</div>
+  const head = `<div class="ihead"><div class="thumb">${art ? `<img src="${art}" alt="">` : NOTE_ICO}</div>
     <div class="info"><p class="it-title">${esc(s.name)}</p><p class="it-artist">${esc(s.artist || '가수 정보 없음')}</p></div></div>
     <div class="seg seg3">${[['lyrics', '가사'], ['notes', '계이름'], ['info', '곡 정보']].map(([k, l]) => `<button data-t="${k}" class="${infoTab === k ? 'on' : ''}">${l}</button>`).join('')}</div>`;
   let body = '', mount = null;
@@ -1997,11 +2035,11 @@ function updateNow() {
   $('#pSub').textContent = s ? `${s.artist ? s.artist + ' · ' : ''}${srcName} · ${order.length ? pos + 1 : 0}/${order.length}` : '곡을 눌러 재생하세요';
   if (infoOpen && s && infoSongId !== s.id) infoSheet();
   const art = artUrl(s);
-  $('#pArt').innerHTML = art ? `<img src="${art}" alt="">` : '<span>♪</span>';
+  $('#pArt').innerHTML = art ? `<img src="${art}" alt="">` : NOTE_ICO;
   if ('mediaSession' in navigator && s) {
     try {
       navigator.mediaSession.metadata = new MediaMetadata({ title: s.name, artist: s.artist || '내 음악', album: s.album || srcName,
-        artwork: art ? [{ src: art, sizes: '512x512', type: s.art.type || 'image/jpeg' }] : [{ src: 'icon-512.png', sizes: '512x512', type: 'image/png' }] });
+        artwork: art ? [{ src: art, sizes: '512x512', type: 'image/jpeg' }] : [{ src: 'icon-512.png', sizes: '512x512', type: 'image/png' }] });
     } catch {}
   }
 }
@@ -2301,6 +2339,7 @@ async function attachFile(s, f) {
   if (!s.file) s.file = f.name;
   if (!s.dur) { try { s.dur = await getDuration(await getBlob(s)); } catch {} }
   await put('songs', s);
+  if (!s.thumb) queueArt(s, true);
 }
 // 여러 곡을 한 번에 골라 자동으로 다시 연결
 function relinkMany() {
@@ -2513,6 +2552,7 @@ setTimeout(checkUpdate, 4000);
   await restoreState();
   localReadyResolve();
   if (aiCrashed) toast(aiDisabled() ? '이 기기는 메모리가 부족해 가사 자동 받아쓰기를 껐어요' : '가사 AI가 메모리를 너무 써서 앱이 멈췄어요. 더 가벼운 방식으로 다시 해 볼게요');
+  setTimeout(() => songs.forEach(x => queueArt(x)), 1500);   // 썸네일 없는 곡 고치기
   resumeLyrics(aiCrashed ? 30000 : 10000);   // 앱이 다 열린 뒤 천천히 시작
   resumeMelody(5000);
   renderAccount();
