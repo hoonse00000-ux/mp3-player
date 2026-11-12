@@ -267,7 +267,7 @@ input[type=range]::-moz-range-thumb{width:16px;height:16px;border-radius:50%;bac
 <div id="drop">여기에 MP3를 놓으세요</div>
 
 <script>
-window.APP_VERSION = '20261112122655';   // 배포할 때 자동으로 바뀜 (bump-version.sh)
+window.APP_VERSION = '20261112123148';   // 배포할 때 자동으로 바뀜 (bump-version.sh)
 // Firebase 설정 (웹에 공개돼도 괜찮은 값이에요. 보안은 Firebase 콘솔의 규칙과 승인된 도메인으로 지켜요.)
 window.FIREBASE_CONFIG = {
   apiKey: "AIzaSyClt5JQwO1zA6C4uygTcCrnSG0dDHYQl1I",
@@ -2597,7 +2597,13 @@ addEventListener('pageshow', resumeIfInterrupted);
 
 /* ---------- 오프라인 실행 (서비스 워커) ---------- */
 if ('serviceWorker' in navigator && location.protocol === 'https:') {
-  addEventListener('load', () => navigator.serviceWorker.register('sw.js').then(reg => { swReg = reg; }).catch(() => {}));
+  // 서비스 워커가 바뀌었을 때 "나는 새 버전 화면이에요" 하고 대답 → 예전 화면만 새로 열림
+  navigator.serviceWorker.addEventListener('message', e => {
+    if (e.data && e.data.type === 'sw-hello') { try { e.ports[0] && e.ports[0].postMessage('ok'); } catch {} setTimeout(checkUpdate, 500); }
+  });
+  try { navigator.serviceWorker.startMessages && navigator.serviceWorker.startMessages(); } catch {}
+  const reg = () => navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).then(r => { swReg = r; r.update().catch(() => {}); }).catch(() => {});
+  if (document.readyState === 'complete') reg(); else addEventListener('load', reg);
 }
 /* ---------- 새 버전 자동 반영 (홈 화면 앱도 껐다 켤 필요 없이) ---------- */
 let swReg = null, pendingVersion = null;
