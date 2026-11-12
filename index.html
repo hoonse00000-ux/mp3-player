@@ -267,7 +267,7 @@ input[type=range]::-moz-range-thumb{width:16px;height:16px;border-radius:50%;bac
 <div id="drop">여기에 MP3를 놓으세요</div>
 
 <script>
-window.APP_VERSION = '20261112112946';   // 배포할 때 자동으로 바뀜 (bump-version.sh)
+window.APP_VERSION = '20261112122114';   // 배포할 때 자동으로 바뀜 (bump-version.sh)
 // Firebase 설정 (웹에 공개돼도 괜찮은 값이에요. 보안은 Firebase 콘솔의 규칙과 승인된 도메인으로 지켜요.)
 window.FIREBASE_CONFIG = {
   apiKey: "AIzaSyClt5JQwO1zA6C4uygTcCrnSG0dDHYQl1I",
@@ -2027,6 +2027,22 @@ function setPlayIcon() { if (wantPlay !== null) return; $('#playBtn').innerHTML 
 // 재생 버튼: 누르는 즉시 아이콘을 바꾸고, 연달아 눌러도 한 번만 처리, 재생이 안 되면 파일을 다시 연결해 한 번 더 시도
 let playLock = 0, wantPlay = null;
 function showPlayState(playing) { $('#playBtn').innerHTML = playing ? ICON.pause : ICON.play; }
+// 이어폰·잠금화면에서 재생: 효과 엔진 깨우기 → 재생 → 안 되면 한 번 더 → 곡 파일을 새로 연결해서 재생
+let remoteBusy = false;
+async function remotePlay() {
+  if (remoteBusy) return; remoteBusy = true;
+  try {
+    if (!curId) { await togglePlay(); return; }
+    userPaused = false;
+    if (needsGraph()) initAudio();
+    if (ctx && ctx.state !== 'running') ctx.resume().catch(() => {});
+    for (let i = 0; i < 2; i++) {
+      try { await audio.play(); return; } catch (e) { await new Promise(r => setTimeout(r, 250)); }
+    }
+    try { await freshSource(songById(curId)); await audio.play(); }
+    catch { try { navigator.mediaSession.playbackState = 'paused'; } catch {} setPlayIcon(); }
+  } finally { remoteBusy = false; }
+}
 async function togglePlay() {
   const now = Date.now();
   if (now - playLock < 400) return;
@@ -2122,8 +2138,10 @@ function updateNow() {
 if ('mediaSession' in navigator) {
   const ms = navigator.mediaSession;
   try {
-    ms.setActionHandler('play', () => audio.play());
-    ms.setActionHandler('pause', () => { userPaused = true; audio.pause(); });
+    ms.setActionHandler('play', remotePlay);
+    // 이어폰 버튼은 기기가 기억하는 상태에 따라 '정지'만 보낼 때가 있음 → 이미 멈춰 있으면 재생으로 처리
+    ms.setActionHandler('pause', () => { if (audio.paused) remotePlay(); else { userPaused = true; audio.pause(); } });
+    try { ms.setActionHandler('stop', () => { userPaused = true; audio.pause(); }); } catch {}
     ms.setActionHandler('nexttrack', () => next(false));
     ms.setActionHandler('previoustrack', prev);
     ms.setActionHandler('seekto', d => { if (d.seekTime != null) audio.currentTime = d.seekTime; });
@@ -2137,7 +2155,11 @@ audio.addEventListener('timeupdate', () => {
   lastPos = Date.now();
   try { navigator.mediaSession.setPositionState({ duration: audio.duration, playbackRate: audio.playbackRate, position: Math.min(audio.currentTime, audio.duration) }); } catch {}
 });
-audio.addEventListener('play', () => { try { navigator.mediaSession.playbackState = 'playing'; } catch {} });
+audio.addEventListener('play', () => {
+  try { navigator.mediaSession.playbackState = 'playing'; } catch {}
+  // 효과(리믹스) 사용 중에 효과 엔진이 잠들어 있으면 재생돼도 소리가 안 나므로 깨움
+  if (ctx && ctx.state !== 'running') ctx.resume().catch(() => {});
+});
 audio.addEventListener('pause', () => { try { navigator.mediaSession.playbackState = 'paused'; } catch {} });
 const wake = () => { if (ctx && ctx.state !== 'running' && !audio.paused) ctx.resume().catch(() => {}); };
 document.addEventListener('visibilitychange', wake);
