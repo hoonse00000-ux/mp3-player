@@ -267,7 +267,7 @@ input[type=range]::-moz-range-thumb{width:16px;height:16px;border-radius:50%;bac
 <div id="drop">여기에 MP3를 놓으세요</div>
 
 <script>
-window.APP_VERSION = '20261112122114';   // 배포할 때 자동으로 바뀜 (bump-version.sh)
+window.APP_VERSION = '20261112122655';   // 배포할 때 자동으로 바뀜 (bump-version.sh)
 // Firebase 설정 (웹에 공개돼도 괜찮은 값이에요. 보안은 Firebase 콘솔의 규칙과 승인된 도메인으로 지켜요.)
 window.FIREBASE_CONFIG = {
   apiKey: "AIzaSyClt5JQwO1zA6C4uygTcCrnSG0dDHYQl1I",
@@ -2603,10 +2603,12 @@ if ('serviceWorker' in navigator && location.protocol === 'https:') {
 let swReg = null, pendingVersion = null;
 function applyUpdate() {
   if (!pendingVersion) return;
-  LS.set('reloadedFor', pendingVersion);
+  const tries = LS.get('reloadTries', {});
+  tries[pendingVersion] = (tries[pendingVersion] || 0) + 1; LS.set('reloadTries', { [pendingVersion]: tries[pendingVersion] });
   saveState();
   if (swReg && swReg.waiting) swReg.waiting.postMessage('skipWaiting');
-  location.reload();
+  // 주소에 버전을 붙여서 열기 → 인터넷 중간 저장소(CDN)에 남은 예전 화면을 건너뛰고 새 버전을 받음
+  setTimeout(() => location.replace(location.pathname + '?v=' + pendingVersion + location.hash), 150);
 }
 function showUpdateBanner() {
   if (document.getElementById('updBar')) return;
@@ -2623,11 +2625,12 @@ async function checkUpdate() {
     const r = await fetch('version.json?t=' + Date.now(), { cache: 'no-store' });
     if (!r.ok) return;
     const v = String((await r.json()).v || '');
-    if (!v || v === window.APP_VERSION) return;
+    if (!v || !(v > window.APP_VERSION)) return;              // 더 새로운 버전일 때만
     if (!migrated) return;                                   // 곡 정리 중에는 새로고침하지 않음
-    if (LS.get('reloadedFor', '') === v) return;           // 이미 한 번 새로고침했는데도 같으면 반복하지 않음
+    const tries = (LS.get('reloadTries', {}) || {})[v] || 0;
+    if (tries >= 3) { pendingVersion = v; showUpdateBanner(); return; }   // 몇 번 해도 안 되면 반복하지 않고 알림만
     pendingVersion = v;
-    if (audio.paused && !document.hidden && !aiCur && !melodyJob) applyUpdate();   // 음악이 멈춰 있으면 바로 적용
+    if (audio.paused && !document.hidden) applyUpdate();   // 음악이 멈춰 있으면 바로 적용
     else showUpdateBanner();                                                    // 재생 중이면 알림만
   } catch {}
 }
@@ -2635,6 +2638,8 @@ audio.addEventListener('pause', () => { if (pendingVersion && userPaused && !doc
 document.addEventListener('visibilitychange', () => { if (!document.hidden) checkUpdate(); });
 setInterval(() => { if (!document.hidden) checkUpdate(); }, 3 * 60 * 1000);
 setTimeout(checkUpdate, 4000);
+// 업데이트하면서 붙인 '?v=…'는 주소창에서 지움
+try { if (/[?&]v=/.test(location.search)) history.replaceState(null, '', location.pathname + location.hash); } catch {}
 
 /* ---------- 시작 ---------- */
 (async () => {
