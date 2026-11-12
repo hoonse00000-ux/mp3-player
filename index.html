@@ -267,7 +267,7 @@ input[type=range]::-moz-range-thumb{width:16px;height:16px;border-radius:50%;bac
 <div id="drop">여기에 MP3를 놓으세요</div>
 
 <script>
-window.APP_VERSION = '20261112112701';   // 배포할 때 자동으로 바뀜 (bump-version.sh)
+window.APP_VERSION = '20261112112946';   // 배포할 때 자동으로 바뀜 (bump-version.sh)
 // Firebase 설정 (웹에 공개돼도 괜찮은 값이에요. 보안은 Firebase 콘솔의 규칙과 승인된 도메인으로 지켜요.)
 window.FIREBASE_CONFIG = {
   apiKey: "AIzaSyClt5JQwO1zA6C4uygTcCrnSG0dDHYQl1I",
@@ -287,6 +287,7 @@ const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 
 const fmt = t => { if (!isFinite(t)) return '0:00'; t = Math.floor(t); return Math.floor(t/60) + ':' + String(t%60).padStart(2,'0'); };
 const SHUF = '<svg class="ico-s" viewBox="0 0 24 24"><path d="M3 7h2.5c4.5 0 6.5 10 11 10H20"/><path d="M3 17h2.5c1.8 0 3.1-1.6 4.3-3.6"/><path d="M13.7 10.6C14.9 8.6 16.2 7 18 7h2"/><path d="M17.3 4.3 20 7l-2.7 2.7"/><path d="M17.3 14.3 20 17l-2.7 2.7"/></svg>';
 const ICO = d => `<svg class="ico-s" viewBox="0 0 24 24">${d}</svg>`;
+const I_IMG = ICO('<rect x="3.5" y="4.5" width="17" height="15" rx="3"/><circle cx="9" cy="10" r="1.8"/><path d="M4 17l5-4.5 4 3.5 3-2.5 4.5 4"/>');
 const I_EDIT = ICO('<path d="M4 20h4L19 9a2.8 2.8 0 0 0-4-4L4 16z"/><path d="M13.5 6.5l4 4"/>');
 const I_ADD = ICO('<rect x="3.5" y="3.5" width="17" height="17" rx="4"/><path d="M12 8v8M8 12h8"/>');
 const I_REM = ICO('<rect x="3.5" y="3.5" width="17" height="17" rx="4"/><path d="M8 12h8"/>');
@@ -739,17 +740,45 @@ function artUrl(s) {
   if (!u) { try { u = URL.createObjectURL(s.art); artUrls.set(s.art, u); } catch { return ''; } }
   return u;
 }
+async function thumbFromSrc(src, cropY = 0) {   // cropY: 위아래 검은 띠 비율 (유튜브 썸네일)
+  const img = new Image();
+  if (/^https?:/.test(src)) img.crossOrigin = 'anonymous';
+  await new Promise((ok, no) => { img.onload = ok; img.onerror = no; img.src = src; setTimeout(no, 12000); });
+  if (!img.naturalWidth || (/^https?:/.test(src) && img.naturalWidth < 200)) throw 0;   // 유튜브 '없음' 회색 그림 거르기
+  const sw = img.naturalWidth, sh = img.naturalHeight * (1 - 2 * cropY), sy = img.naturalHeight * cropY;
+  const side = Math.min(sw, sh), sx = (sw - side) / 2, sy2 = sy + (sh - side) / 2;
+  const S = 512, c = document.createElement('canvas'); c.width = c.height = S;
+  c.getContext('2d').drawImage(img, sx, sy2, side, side, 0, 0, S, S);
+  return c.toDataURL('image/jpeg', 0.8);
+}
 async function makeThumb(blob) {
   const u = URL.createObjectURL(blob);
+  try { return await thumbFromSrc(u); } finally { URL.revokeObjectURL(u); }
+}
+// 곡 파일에 사진이 없을 때 인터넷에서 찾기: ① 파일 이름의 유튜브 영상 번호 → 영상 썸네일 ② 노래 제목·가수로 앨범 표지 검색
+const ytIdOf = s => ((s.file || '').match(/\[([A-Za-z0-9_-]{11})\]\s*(\.[^.]+)?$/) || [])[1];
+const normT = t => (t || '').toLowerCase().replace(/\(.*?\)|\[.*?\]|official|audio|video|lyrics?|mv|m\/v|가사|공식/g, '').replace(/[^\p{L}\p{N}]+/gu, '');
+async function webArt(s) {
+  if (!navigator.onLine) return '';
+  const id = ytIdOf(s);
+  if (id) {
+    for (const [q, crop] of [['maxresdefault', 0], ['hqdefault', 0.125]]) {
+      try { const t = await thumbFromSrc(`https://i.ytimg.com/vi/${id}/${q}.jpg`, crop); if (t) return t; } catch {}
+    }
+    // 사진을 복사할 수 없는 경우엔 주소를 그대로 사용
+    const u = `https://i.ytimg.com/vi/${id}/mqdefault.jpg`;
+    if (await new Promise(ok => { const im = new Image(); im.onload = () => ok(im.naturalWidth >= 200); im.onerror = () => ok(false); im.src = u; })) return u;
+  }
   try {
-    const img = new Image();
-    await new Promise((ok, no) => { img.onload = ok; img.onerror = no; img.src = u; });
-    if (!img.naturalWidth) throw 0;
-    const S = 512, c = document.createElement('canvas'); c.width = c.height = S;
-    const k = Math.max(S / img.naturalWidth, S / img.naturalHeight), w = img.naturalWidth * k, h = img.naturalHeight * k;
-    c.getContext('2d').drawImage(img, (S - w) / 2, (S - h) / 2, w, h);
-    return c.toDataURL('image/jpeg', 0.8);
-  } finally { URL.revokeObjectURL(u); }
+    const title = s.name, term = [s.artist, title].filter(Boolean).join(' ');
+    const r = await fetch(`https://itunes.apple.com/search?term=${encodeURIComponent(term)}&entity=song&limit=8&country=KR`);
+    const j = await r.json();
+    const want = normT(title), wantA = normT(s.artist);
+    const hit = (j.results || []).find(x => normT(x.trackName) === want && (!wantA || normT(x.artistName).includes(wantA) || wantA.includes(normT(x.artistName))))
+      || (wantA ? null : (j.results || []).find(x => want.length >= 4 && normT(x.trackName + x.artistName).includes(want)));
+    if (hit && hit.artworkUrl100) return await thumbFromSrc(hit.artworkUrl100.replace(/\d+x\d+bb/, '600x600bb'));
+  } catch {}
+  return '';
 }
 const artQ = []; let artBusy = false;
 function queueArt(s, force) { if (!s || (s.thumb && !force)) return; if (force) s.artTried = false; if (!artQ.includes(s)) artQ.push(s); runArt(); }
@@ -764,6 +793,7 @@ async function runArt() {
       try { const tags = await readTags(await getBlob(s)); if (tags.art) { s.art = tags.art; t = await makeThumb(tags.art); } } catch {}
       s.artTried = true;
     }
+    if (!t && !s.webArtTried && navigator.onLine) { t = await webArt(s); s.webArtTried = true; }
     if (t) s.thumb = t;
     else delete s.art;
     await put('songs', s).catch(() => {});
@@ -772,6 +802,7 @@ async function runArt() {
   }
   artBusy = false;
 }
+addEventListener('online', () => songs.forEach(x => { if (!x.thumb) { x.webArtTried = false; queueArt(x); } }));
 const NOTE_ICO = '<svg class="ico-s" viewBox="0 0 24 24"><path d="M9 18V6l10-2v12"/><circle cx="6.5" cy="18" r="2.5"/><circle cx="16.5" cy="16" r="2.5"/></svg>';
 
 /* 끌어서 순서 바꾸기 */
@@ -883,6 +914,7 @@ function songMenu(s) {
   openSheet(`<p class="sheet-title">${esc(s.name)}</p>
     <button class="act-item" data-a="rename">${I_EDIT} 이름 바꾸기</button>
     <button class="act-item" data-a="addpl">${I_ADD} 플레이리스트에 담기</button>
+    <button class="act-item" data-a="art">${I_IMG} 썸네일 바꾸기</button>
     ${inPl ? `<button class="act-item" data-a="rmpl">${I_REM} 이 플레이리스트에서 빼기</button>` : ''}
     ${!s.hasAudio ? `<button class="act-item" data-a="relink" style="color:var(--accent)">${I_ADD} 파일 다시 연결 (이름·가사·계이름 유지)</button>` : ''}
     <button class="act-item" data-a="save">${I_SAVE} MP3 파일로 저장</button>
@@ -890,7 +922,8 @@ function songMenu(s) {
     b.querySelectorAll('[data-a]').forEach(x => x.onclick = async () => {
       const a = x.dataset.a;
       if (a === 'save') { saveMp3(s); return; }
-      if (a === 'relink') { closeSheet(); relinkSong(s); return; }             // 공유 창은 누른 순간에 바로 열어야 해서 먼저 처리
+      if (a === 'relink') { closeSheet(); relinkSong(s); return; }
+      if (a === 'art') { closeSheet(); pickArt(s); return; }             // 공유 창은 누른 순간에 바로 열어야 해서 먼저 처리
       closeSheet();
       await new Promise(r => setTimeout(r, 230));
       if (a === 'rename') {
@@ -913,6 +946,16 @@ function songMenu(s) {
       }
     });
   });
+}
+function pickArt(s) {
+  const inp = document.createElement('input');
+  inp.type = 'file'; inp.accept = 'image/*';
+  inp.onchange = async () => {
+    const f = inp.files && inp.files[0]; if (!f) return;
+    try { s.thumb = await makeThumb(f); s.customArt = true; await put('songs', s); softRender(); updateNow(); if (infoOpen) infoSheet(); toast('썸네일을 바꿨어요'); }
+    catch { toast('이 사진은 쓸 수 없어요'); }
+  };
+  inp.click();
 }
 function addToPlaylists(s) {
   if (!playlists.length) {
