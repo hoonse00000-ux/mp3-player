@@ -65,6 +65,7 @@ main{padding:8px 14px}
 .sub{font-size:12px;color:var(--muted);margin-top:2px}
 .ic{width:36px;height:36px;border-radius:10px;display:grid;place-items:center;color:var(--muted);flex-shrink:0;font-size:18px}
 .ic:active{background:var(--panel2)}
+.ver{text-align:center;color:var(--muted,#8a7f76);font-size:12px;margin:22px 0 8px}.ver button{background:none;border:0;color:var(--accent);font:inherit;text-decoration:underline;padding:4px}
 .thumb img{width:100%;height:100%;object-fit:cover;display:block}.thumb .ico-s{width:22px;height:22px}
 .thumb{width:44px;height:44px;border-radius:10px;overflow:hidden;background:linear-gradient(135deg,#3b2a20,#251c16);display:grid;place-items:center;color:var(--accent);flex-shrink:0;position:relative;font-size:18px}
 .thumb img{width:100%;height:100%;object-fit:cover;display:block}
@@ -267,7 +268,7 @@ input[type=range]::-moz-range-thumb{width:16px;height:16px;border-radius:50%;bac
 <div id="drop">여기에 MP3를 놓으세요</div>
 
 <script>
-window.APP_VERSION = '20261112123148';   // 배포할 때 자동으로 바뀜 (bump-version.sh)
+window.APP_VERSION = '20261112123349';   // 배포할 때 자동으로 바뀜 (bump-version.sh)
 // Firebase 설정 (웹에 공개돼도 괜찮은 값이에요. 보안은 Firebase 콘솔의 규칙과 승인된 도메인으로 지켜요.)
 window.FIREBASE_CONFIG = {
   apiKey: "AIzaSyClt5JQwO1zA6C4uygTcCrnSG0dDHYQl1I",
@@ -832,6 +833,21 @@ function enableDrag(box, onDone) {
 }
 
 let libQuery = '';
+// 앱 버전 (한국 시간으로 표시)
+function verLabel() {
+  const v = window.APP_VERSION || '';
+  const m = v.match(/^(\d{4})(\d\d)(\d\d)(\d\d)(\d\d)/); if (!m) return v;
+  const d = new Date(Date.UTC(+m[1], m[2] - 1, +m[3], +m[4], +m[5]) + 9 * 3600e3);
+  return `${d.getUTCMonth() + 1}월 ${d.getUTCDate()}일 ${String(d.getUTCHours()).padStart(2, '0')}:${String(d.getUTCMinutes()).padStart(2, '0')}`;
+}
+// 브라우저에 남은 예전 앱 파일만 지우고 새로 받기 (곡·가사·플레이리스트는 그대로)
+async function forceRefresh() {
+  toast('최신 버전을 받는 중…');
+  saveState();
+  try { const rs = await navigator.serviceWorker.getRegistrations(); await Promise.all(rs.map(r => r.unregister())); } catch {}
+  try { const ks = await caches.keys(); await Promise.all(ks.map(k => caches.delete(k))); } catch {}
+  location.replace(location.pathname + '?v=' + Date.now() + location.hash);
+}
 function render() {
   const m = $('#main');
   const ae = document.activeElement, keepQ = ae && ae.id === 'q', caret = keepQ ? ae.selectionStart : 0;
@@ -846,10 +862,12 @@ function render() {
         ${songs.some(x => !x.hasAudio) ? `<button class="btn" id="relinkAll" style="color:var(--accent);border:1px solid var(--accent)">${I_ADD} 파일 다시 연결 (${songs.filter(x => !x.hasAudio).length}곡)</button>` : ''}
         ${list.length ? `<button class="btn" id="playAll">▶ 전체 재생</button><button class="btn" id="shufAll">${SHUF} 셔플 재생</button>` : ''}
       </div>` + (songs.length ? `<input class="field search" id="q" type="search" placeholder="곡 · 가수 · 앨범 검색" value="${esc(libQuery)}" autocomplete="off">` + (list.length ? `<div id="songList">${list.map((s, i) => songRow(s, i, 'lib')).join('')}</div>` : '<div class="empty">검색 결과가 없어요.</div>')
-      : `<div class="empty">아직 저장된 곡이 없어요.<br><b>＋ MP3 추가</b>로 MP3 파일을 불러오거나,<br><b>영상에서 추가</b>로 영상의 소리만 뽑아 넣으세요.</div>`);
+      : `<div class="empty">아직 저장된 곡이 없어요.<br><b>＋ MP3 추가</b>로 MP3 파일을 불러오거나,<br><b>영상에서 추가</b>로 영상의 소리만 뽑아 넣으세요.</div>`)
+      + `<div class="ver">버전 ${verLabel()} · <button id="verBtn">최신 버전 받기</button></div>`;
     $('#addBtn').onclick = () => $('#fileIn').click();
     $('#vidBtn').onclick = () => $('#videoIn').click();
     if ($('#relinkAll')) $('#relinkAll').onclick = relinkMany;
+    $('#verBtn').onclick = forceRefresh;
     if ($('#q')) $('#q').oninput = e => { libQuery = e.target.value; render(); };
     if (list.length) {
       $('#playAll').onclick = () => { setShuffle(false); playList(list.map(s => s.id), 0, 'lib'); };
