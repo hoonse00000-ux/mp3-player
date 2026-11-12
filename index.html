@@ -266,7 +266,7 @@ input[type=range]::-moz-range-thumb{width:16px;height:16px;border-radius:50%;bac
 <div id="drop">여기에 MP3를 놓으세요</div>
 
 <script>
-window.APP_VERSION = '20261111151014';   // 배포할 때 자동으로 바뀜 (bump-version.sh)
+window.APP_VERSION = '20261112112248';   // 배포할 때 자동으로 바뀜 (bump-version.sh)
 // Firebase 설정 (웹에 공개돼도 괜찮은 값이에요. 보안은 Firebase 콘솔의 규칙과 승인된 도메인으로 지켜요.)
 window.FIREBASE_CONFIG = {
   apiKey: "AIzaSyClt5JQwO1zA6C4uygTcCrnSG0dDHYQl1I",
@@ -1896,20 +1896,43 @@ function syncQueue(ids) { // 큐 원본이 바뀌었을 때 현재 곡 위치 �
   if (ci < 0) { buildOrder(0); pos = -1; if (shuffle) order = shuffled(order); return; }
   buildOrder(ci);
 }
-async function loadAndPlay() {
+// 다음 곡을 미리 메모리에 올려 둠 → 앱 밖에서 곡이 끝나도 저장소를 기다리지 않고 바로 넘어감
+function peekNext() {
+  if (!queue.length) return null;
+  if (repeat === 'one') return null;
+  if (pos + 1 < order.length) return songById(queue[order[pos + 1]]);
+  return repeat === 'off' || shuffle ? null : songById(queue[order[0]]);
+}
+function prefetchNext() { const n = peekNext(); if (n && n.hasAudio && !blobCache.has(n.id)) getBlob(n).catch(() => {}); }
+async function loadAndPlay(auto, skipped = 0) {
   const s = songById(queue[order[pos]]);
   if (!s) return;
   let blob;
   try { if (!s.hasAudio) throw 0; blob = await getBlob(s); }
-  catch { markBroken(s); toast('이 곡의 파일이 없어요. ⋯ → 파일 다시 연결로 복구해 주세요'); return; }
+  catch {
+    markBroken(s);
+    // 자동으로 넘어가던 중이면 파일 없는 곡은 건너뛰고 계속 재생
+    if (auto && skipped < order.length - 1) { pos = (pos + 1) % order.length; return loadAndPlay(true, skipped + 1); }
+    toast('이 곡의 파일이 없어요. 위쪽 \'파일 다시 연결\'로 복구해 주세요'); return;
+  }
   if (curUrl) URL.revokeObjectURL(curUrl);
   curUrl = URL.createObjectURL(blob);
   curId = s.id; pendingTime = null;
   audio.src = curUrl;
   applyFx();
   if (needsGraph()) initAudio();
-  try { if (ctx && ctx.state === 'suspended') await ctx.resume(); await audio.play(); } catch (e) {}
+  // 백그라운드에선 ctx.resume()이 끝나지 않을 수 있어 기다리지 않고 바로 재생
+  if (ctx && ctx.state === 'suspended') ctx.resume().catch(() => {});
+  try { await audio.play(); }
+  catch (e) {
+    if (auto) {                                              // 앱 밖에서 막혔으면 조금 뒤 다시, 그래도 안 되면 돌아왔을 때 이어서
+      userPaused = false; bgInterrupted = true;
+      setTimeout(() => { if (audio.paused && !userPaused && curId === s.id) audio.play().catch(() => {}); }, 800);
+    }
+  }
+  if ('mediaSession' in navigator) { try { navigator.mediaSession.playbackState = audio.paused ? 'paused' : 'playing'; } catch {} }
   updateNow(); render(); saveState();
+  setTimeout(prefetchNext, 1500);
 }
 function next(auto) {
   if (!queue.length) return;
@@ -1920,7 +1943,7 @@ function next(auto) {
     if (shuffle) { order = shuffled(order); if (order.length > 1 && queue[order[0]] === curId) order.push(order.shift()); }
     pos = 0;
   } else pos++;
-  loadAndPlay();
+  loadAndPlay(!!auto);
 }
 function prev() {
   if (!queue.length) return;
@@ -1928,7 +1951,16 @@ function prev() {
   pos = pos - 1 < 0 ? order.length - 1 : pos - 1;
   loadAndPlay();
 }
-audio.addEventListener('ended', () => next(true));
+let endedFor = null;
+function onEnded() { if (endedFor === audio.src) return; endedFor = audio.src; next(true); }
+audio.addEventListener('ended', onEnded);
+audio.addEventListener('loadstart', () => { endedFor = null; });
+// 끝나기 직전에 다음 곡이 메모리에 있는지 다시 확인, 'ended'가 빠졌을 때 대비해 직접 넘김
+audio.addEventListener('timeupdate', () => {
+  const left = audio.duration - audio.currentTime;
+  if (left < 20 && left > 0) prefetchNext();
+});
+setInterval(() => { if (curId && audio.ended && !userPaused && !audio.loop && endedFor !== audio.src && !(repeat === 'off' && pos + 1 >= order.length)) onEnded(); }, 2000);
 audio.addEventListener('play', () => { render(); setPlayIcon(); });
 audio.addEventListener('pause', () => { render(); setPlayIcon(); });
 audio.addEventListener('loadedmetadata', () => { $('#tDur').textContent = fmt(audio.duration); applyFx(); });
