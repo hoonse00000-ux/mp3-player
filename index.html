@@ -268,7 +268,7 @@ input[type=range]::-moz-range-thumb{width:16px;height:16px;border-radius:50%;bac
 <div id="drop">여기에 MP3를 놓으세요</div>
 
 <script>
-window.APP_VERSION = '20261112123349';   // 배포할 때 자동으로 바뀜 (bump-version.sh)
+window.APP_VERSION = '20261113155445';   // 배포할 때 자동으로 바뀜 (bump-version.sh)
 // Firebase 설정 (웹에 공개돼도 괜찮은 값이에요. 보안은 Firebase 콘솔의 규칙과 승인된 도메인으로 지켜요.)
 window.FIREBASE_CONFIG = {
   apiKey: "AIzaSyClt5JQwO1zA6C4uygTcCrnSG0dDHYQl1I",
@@ -1684,7 +1684,13 @@ if (LS.get('aiRunning', 0)) {            // 지난번 받아쓰기 도중 앱이
 }
 const aiDisabled = () => aiLevel >= AI_LEVELS.length;
 let aiReject = null;
-document.addEventListener('visibilitychange', () => { if (document.hidden && aiWorker && aiCur && aiReject) { aiWorker.terminate(); aiWorker = null; aiReject(new Error('hidden')); } });
+// 다른 앱으로 가면 가사 AI를 메모리에서 내림 → 휴대폰이 메모리가 모자라 이 앱(음악)을 꺼 버리는 일을 막음
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden || !aiWorker) return;
+  const rej = aiCur && aiReject;
+  aiWorker.terminate(); aiWorker = null;
+  if (rej) aiReject(new Error('hidden'));
+});
 let aiQ = [], aiBusy = false, aiWorker = null, aiCur = null, aiNetWarned = false, aiFirstWarned = LS.get('aiModelReady', false);
 const LANGS = { auto: '자동', korean: '한국어', japanese: '일본어', english: '영어', chinese: '중국어' };
 // 제목·가수 글자로 언어 추측 (소리로 알아내지 못했을 때 사용)
@@ -2248,6 +2254,8 @@ function initAudio() {
     const AC = window.AudioContext || window.webkitAudioContext; if (!AC) return;
     ctx = new AC();
     srcNode = ctx.createMediaElementSource(audio);
+    // 효과 엔진이 다른 앱 때문에 잠들면 소리가 끊기므로, 재생 중이면 바로 다시 깨움
+    ctx.onstatechange = () => { if (ctx.state !== 'running' && !audio.paused) ctx.resume().catch(() => {}); };
     bassF = ctx.createBiquadFilter(); bassF.type = 'lowshelf'; bassF.frequency.value = 180;
     master = ctx.createGain();
     conv = ctx.createConvolver(); conv.buffer = impulse(3, 2.5);
@@ -2596,12 +2604,24 @@ function resumeIfInterrupted() {
   if (bgInterrupted && audio.paused && !userPaused && curId && !otherAudio()) audio.play().catch(() => {});
 }
 audio.addEventListener('play', () => { userPaused = false; bgInterrupted = false; });
+let hiddenAt = 0, sysPauseAt = 0;
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) return;
+  hiddenAt = Date.now();
+  // 앱을 나가기 직전에 멈춘 경우(멈춤이 먼저 온 경우)도 앱 전환 때문으로 처리
+  if (!AS && bgInterrupted && audio.paused && Date.now() - sysPauseAt < 1500) retryResume([300, 1200, 2500]);
+});
+function retryResume(delays) {
+  for (const d of delays) setTimeout(() => { if (!otherAudio()) resumeIfInterrupted(); }, d);
+}
 audio.addEventListener('pause', () => {
   if (userPaused || audio.ended || !curId) return;
-  bgInterrupted = true;                                    // 내가 멈춘 게 아님 → 나중에 이어서 재생
-  // 다른 소리 때문이 아니라 브라우저가 그냥 멈춘 거면(앱 전환 등) 바로 다시 재생.
+  bgInterrupted = true; sysPauseAt = Date.now();          // 내가 멈춘 게 아님 → 나중에 이어서 재생
+  // 다른 소리 때문이 아니라 브라우저가 그냥 멈춘 거면(앱 전환 등) 바로 다시 재생 (한 번에 안 되면 몇 번 더).
   // 다른 영상이 소리를 가져간 경우엔 그 영상을 방해하지 않도록 기다림
-  if (AS && AS.state && AS.state !== 'interrupted') setTimeout(() => { if (!otherAudio()) resumeIfInterrupted(); }, 600);
+  if (AS && AS.state) { if (AS.state !== 'interrupted') retryResume([600, 2000, 5000]); }
+  // 갤럭시 등: 다른 소리 때문인지 알 수 없으므로, 앱을 막 나간 순간에 멈춘 경우만 앱 전환 때문으로 보고 다시 재생
+  else if (document.hidden && Date.now() - hiddenAt < 2500) retryResume([300, 1200, 2500]);
 });
 // 다른 영상이 끝나서 소리를 돌려받으면 이어서 재생
 try { if (AS && 'onstatechange' in AS) AS.addEventListener('statechange', () => { if (AS.state !== 'interrupted') setTimeout(resumeIfInterrupted, 500); }); } catch {}
