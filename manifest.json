@@ -47,5 +47,43 @@
       "purpose": "maskable"
     }
   ],
-  "id": "./"
+  "id": "./",
+  "shortcuts": [
+    {
+      "name": "이어서 재생",
+      "short_name": "이어서 재생",
+      "url": "./?go=resume",
+      "icons": [
+        {
+          "src": "sc-resume.png",
+          "sizes": "96x96",
+          "type": "image/png"
+        }
+      ]
+    },
+    {
+      "name": "셔플 재생",
+      "short_name": "셔플 재생",
+      "url": "./?go=shuffle",
+      "icons": [
+        {
+          "src": "sc-shuffle.png",
+          "sizes": "96x96",
+          "type": "image/png"
+        }
+      ]
+    },
+    {
+      "name": "플레이리스트",
+      "short_name": "플레이리스트",
+      "url": "./?go=playlists",
+      "icons": [
+        {
+          "src": "sc-playlists.png",
+          "sizes": "96x96",
+          "type": "image/png"
+        }
+      ]
+    }
+  ]
 }

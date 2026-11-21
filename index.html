@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
 <title>내 음악 플레이어</title>
-<link rel="manifest" href="manifest.json?v=2">
+<link rel="manifest" href="manifest.json?v=3">
 <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png?v=2">
 <link rel="icon" type="image/png" sizes="512x512" href="icon-512.png?v=2">
 <link rel="apple-touch-icon" href="icon-180.png">
@@ -268,7 +268,7 @@ input[type=range]::-moz-range-thumb{width:16px;height:16px;border-radius:50%;bac
 <div id="drop">여기에 MP3를 놓으세요</div>
 
 <script>
-window.APP_VERSION = '20261113155445';   // 배포할 때 자동으로 바뀜 (bump-version.sh)
+window.APP_VERSION = '20261121102324';   // 배포할 때 자동으로 바뀜 (bump-version.sh)
 // Firebase 설정 (웹에 공개돼도 괜찮은 값이에요. 보안은 Firebase 콘솔의 규칙과 승인된 도메인으로 지켜요.)
 window.FIREBASE_CONFIG = {
   apiKey: "AIzaSyClt5JQwO1zA6C4uygTcCrnSG0dDHYQl1I",
@@ -2683,7 +2683,25 @@ document.addEventListener('visibilitychange', () => { if (!document.hidden) chec
 setInterval(() => { if (!document.hidden) checkUpdate(); }, 3 * 60 * 1000);
 setTimeout(checkUpdate, 4000);
 // 업데이트하면서 붙인 '?v=…'는 주소창에서 지움
-try { if (/[?&]v=/.test(location.search)) history.replaceState(null, '', location.pathname + location.hash); } catch {}
+const launchGo = new URLSearchParams(location.search).get('go');   // 홈 화면 아이콘 길게 누르기 메뉴에서 연 경우
+try { if (/[?&](v|go)=/.test(location.search)) history.replaceState(null, '', location.pathname + location.hash); } catch {}
+function runLaunchAction() {
+  if (!launchGo) return;
+  const ids = songs.filter(x => x.hasAudio).map(x => x.id);
+  const tapHint = () => setTimeout(() => { if (audio.paused) toast('재생 버튼을 한 번 눌러 주세요'); }, 1800);
+  if (launchGo === 'playlists') {
+    tab = 'playlists'; openPl = null;
+    document.querySelectorAll('.tab').forEach(x => x.classList.toggle('on', x.dataset.tab === 'playlists'));
+    render(); saveState();
+  } else if (launchGo === 'shuffle') {
+    if (!ids.length) return toast('먼저 곡을 추가해 주세요');
+    setShuffle(true); playList(ids, Math.floor(Math.random() * ids.length), 'lib'); tapHint();
+  } else if (launchGo === 'resume') {
+    if (curId && audio.paused) { togglePlay(); tapHint(); }
+    else if (!curId && ids.length) { playList(ids, 0, 'lib'); tapHint(); }
+    else if (!ids.length) toast('먼저 곡을 추가해 주세요');
+  }
+}
 
 /* ---------- 시작 ---------- */
 (async () => {
@@ -2705,6 +2723,7 @@ try { if (/[?&]v=/.test(location.search)) history.replaceState(null, '', locatio
   renderAccount();
   upgradeOldSongs();
   setPlayIcon(); updateModes(); render();
+  runLaunchAction();
 })();
 })();
 </script>
