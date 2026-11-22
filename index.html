@@ -71,6 +71,8 @@ main{padding:8px 14px}
 .room-top{display:flex;justify-content:space-between;align-items:center;margin:4px 0 10px}.room-code{font-size:15px}.room-code b{letter-spacing:3px;color:var(--accent);font-size:18px}
 .room-tag{font-size:11px;border:1px solid var(--accent);color:var(--accent);border-radius:20px;padding:1px 7px;vertical-align:2px}.room-mem{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}.room-mem span{font-size:12px;background:rgba(255,255,255,.08);border-radius:20px;padding:3px 10px}
 .row.cur .name{color:var(--accent)}
+.room-name{font-size:19px;font-weight:700;display:flex;align-items:center;gap:4px;margin-bottom:2px;word-break:break-all}.room-name .ic svg{width:16px;height:16px}
+.room-status{font-size:13px;color:var(--accent);margin:0 0 10px;display:flex;align-items:center;gap:10px}.room-status.off{color:#ff8a80}
 .ver{text-align:center;color:var(--muted,#8a7f76);font-size:12px;margin:22px 0 8px}.ver button{background:none;border:0;color:var(--accent);font:inherit;text-decoration:underline;padding:4px}
 .thumb img{width:100%;height:100%;object-fit:cover;display:block}.thumb .ico-s{width:22px;height:22px}
 .thumb{width:44px;height:44px;border-radius:10px;overflow:hidden;background:linear-gradient(135deg,#3b2a20,#251c16);display:grid;place-items:center;color:var(--accent);flex-shrink:0;position:relative;font-size:18px}
@@ -275,7 +277,7 @@ input[type=range]::-moz-range-thumb{width:16px;height:16px;border-radius:50%;bac
 <div id="drop">여기에 MP3를 놓으세요</div>
 
 <script>
-window.APP_VERSION = '20261122084046';   // 배포할 때 자동으로 바뀜 (bump-version.sh)
+window.APP_VERSION = '20261122133732';   // 배포할 때 자동으로 바뀜 (bump-version.sh)
 // Firebase 설정 (웹에 공개돼도 괜찮은 값이에요. 보안은 Firebase 콘솔의 규칙과 승인된 도메인으로 지켜요.)
 window.FIREBASE_CONFIG = {
   apiKey: "AIzaSyClt5JQwO1zA6C4uygTcCrnSG0dDHYQl1I",
@@ -721,22 +723,46 @@ async function saveMp3(s) {
 
 /* ---------- 함께 듣기 (공유 플레이리스트 · 동시 재생) ----------
    기기끼리 직접 연결(WebRTC, PeerJS 무료 연결 서버)해서 곡 파일과 재생 상태를 주고받음.
-   방장 기기가 중심: 다른 사람의 조작은 방장에게 보내고, 방장이 모두에게 같은 상태를 알림. */
-const room = { on: false, host: false, code: '', peer: null, hostConn: null, conns: [], members: [], list: [], S: null, offset: 0, rtt: 1e9, myId: '', leaving: false, retries: 0 };
-const roomBlobs = new Map(), roomRecv = new Map(), roomUp = new Set();
-let roomSongs = [], pendingApply = null, roomTick = null, roomPing = null, roomLoading = null;
+   방 코드마다 '방 주소'가 하나 있고, 먼저 연 사람이 방장이 됨. 방장이 나가거나 끊기면
+   남은 사람 중 한 명이 자동으로 방장을 이어받아서, 방에 누군가 있는 한 방이 계속 유지됨. */
+const room = { on: false, host: false, code: '', name: '', peer: null, hostConn: null, conns: [], members: [], list: [], S: null,
+  offset: 0, rtt: 1e9, myId: '', leaving: false, connecting: false, status: '', gen: 0, lastMsg: 0, ticks: 0 };
+const roomBlobs = new Map(), roomRecv = new Map(), roomUp = new Set(), upPct = new Map();
+let roomSongs = [], roomMine = {}, myRooms = [], pendingApply = null, roomTick = null, roomPing = null, roomLoading = null;
 const RCH = 16000;
+const sleep = ms => new Promise(r => setTimeout(r, ms));
 const roomSongById = id => roomSongs.find(s => s.id === id);
 const myNick = () => LS.get('nick', '') || '';
 const hostNow = () => Date.now() + room.offset;
-const roomPeerId = code => 'hsmp3-' + code.toLowerCase();
+const roomPeerId = code => 'hsmp3-room-' + code.toLowerCase();
 const newCode = () => Array.from({ length: 6 }, () => 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'[Math.random() * 32 | 0]).join('');
+const normCode = c => (c || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+window.__room = () => ({ room, roomBlobs, roomCtl, roomSongs, myRooms });
+
+/* 내 방 목록 (이 기기에 저장: 방 이름·코드·곡 목록. 곡 파일은 저장하지 않음) */
+async function loadRooms() { try { const r = await getOne('kv', 'rooms'); myRooms = (r && r.rooms) || []; } catch { myRooms = []; } }
+let saveRoomsT = 0;
+function saveRooms() { clearTimeout(saveRoomsT); saveRoomsT = setTimeout(() => put('kv', { id: 'rooms', rooms: myRooms }).catch(() => {}), 600); }
+function rememberRoom() {
+  if (!room.code) return;
+  let r = myRooms.find(x => x.code === room.code);
+  if (!r) { r = { code: room.code, mine: {} }; myRooms.unshift(r); }
+  r.name = room.name; r.updated = Date.now();
+  r.list = room.list.map(m => ({ ...m, thumb: (m.thumb || '').length < 60000 ? m.thumb : '' }));
+  r.mine = { ...(r.mine || {}), ...roomMine };
+  saveRooms();
+}
+
+const PEER_OPTS = { config: { iceServers: [
+  { urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302', 'stun:stun2.l.google.com:19302'] },
+  { urls: ['turn:eu-0.turn.peerjs.com:3478', 'turn:us-0.turn.peerjs.com:3478'], username: 'peerjs', credential: 'peerjsp' }
+] } };
 function loadPeerLib() {
   if (window.Peer) return Promise.resolve();
   return new Promise((ok, no) => {
     const sc = document.createElement('script');
     sc.src = 'https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js';
-    sc.onload = ok; sc.onerror = () => no(new Error('lib')); document.head.appendChild(sc);
+    sc.onload = ok; sc.onerror = () => { sc.remove(); no(new Error('lib')); }; document.head.appendChild(sc);
   });
 }
 // 아이폰은 사용자가 누른 순간에 한 번 재생해 둬야 나중에 자동으로 재생할 수 있음
@@ -746,17 +772,26 @@ function unlockAudio() {
   if (!audio.src) audio.src = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YQAAAAA=';
   try { audio.play().then(() => { userPaused = true; audio.pause(); audio.muted = m; }).catch(() => { audio.muted = m; }); } catch { audio.muted = m; }
 }
-window.__room = () => ({ room, roomBlobs, roomCtl, roomSongs });
 function syncRoomSongs() {
   const old = new Map(roomSongs.map(s => [s.rid, s]));
   roomSongs = room.list.map(m => old.get(m.rid) || { id: 'room_' + m.rid, rid: m.rid, room: true, hasAudio: true, name: m.name, artist: m.artist || '', dur: m.dur || 0, thumb: m.thumb || '', added: 0 });
 }
-const ownerName = m => (room.members.find(x => x.id === m.owner) || {}).name || '나간 사람';
+// 내가 넣은 곡은 내 기기의 곡 파일을 다시 꺼내 둠
+async function ensureMyBlobs() {
+  for (const [rid, sid] of Object.entries(roomMine)) {
+    if (roomBlobs.has(rid) || !room.list.some(m => m.rid === rid)) continue;
+    const s = songs.find(x => x.id === sid);
+    try { roomBlobs.set(rid, await getBlob(s)); } catch {}
+  }
+}
+const ownerName = m => (room.members.find(x => x.id === m.owner) || {}).name || m.ownerName || '나간 사람';
 function sendSafe(c, msg) { try { if (c && c.open !== false) c.send(msg); } catch {} }
 function broadcast(msg, except) { room.conns.forEach(c => { if (c !== except) sendSafe(c, msg); }); }
+const stMsg = () => ({ t: 'st', S: room.S ? { ...room.S, pos: vpos(room.S), at: Date.now() } : null, list: room.list, members: room.members, name: room.name, host: room.myId });
 
 /* 파일 보내기: 연결마다 순서대로, 버퍼가 차면 기다림 */
 function enqueueFile(c, rid, front) {
+  if (!c) return;
   c._q = c._q || []; c._sent = c._sent || new Set();
   if (c._sent.has(rid) || c._q.includes(rid)) return;
   front ? c._q.unshift(rid) : c._q.push(rid);
@@ -765,26 +800,24 @@ function enqueueFile(c, rid, front) {
 async function pumpFiles(c) {
   if (c._busy) return; c._busy = true;
   try {
-    while (c._q.length && room.on) {
+    while (c._q.length && room.on && c.open !== false) {
       const rid = c._q.shift(), blob = roomBlobs.get(rid);
       if (!blob) continue;
       c._sent.add(rid);
       const ab = await blob.arrayBuffer();
       sendSafe(c, { t: 'fs', rid, size: ab.byteLength, type: blob.type || 'audio/mpeg' });
       for (let off = 0; off < ab.byteLength; off += RCH) {
-        while (c.dataChannel && c.dataChannel.bufferedAmount > 1 << 20) await new Promise(r => setTimeout(r, 25));
-        if (!room.on) return;
+        while (c.dataChannel && c.dataChannel.bufferedAmount > 1 << 20) { await sleep(25); if (c.open === false) break; }
+        if (!room.on || c.open === false) { c._sent.delete(rid); return; }
         sendSafe(c, { t: 'fc', rid, d: ab.slice(off, off + RCH) });
-        if (roomUp.has(rid) && off % (RCH * 32) === 0) { roomUpPct(rid, off / ab.byteLength); }
+        if (roomUp.has(rid) && off % (RCH * 32) === 0) roomUpPct(rid, off / ab.byteLength);
       }
       sendSafe(c, { t: 'fe', rid });
       if (roomUp.has(rid)) { roomUp.delete(rid); roomUpPct(rid, 1); }
     }
   } finally { c._busy = false; }
 }
-const upPct = new Map();
 function roomUpPct(rid, p) { upPct.set(rid, p); if (tab === 'room') softRoom(); }
-// 받는 쪽: 조각을 모아 곡 파일로
 function onFileMsg(c, d) {
   if (d.t === 'fs') { roomRecv.set(d.rid, { size: d.size, type: d.type, parts: [], got: 0 }); return; }
   const r = roomRecv.get(d.rid); if (!r) return;
@@ -803,12 +836,18 @@ function vpos(S) { return S.playing ? S.pos + (hostNow() - S.at) / 1000 : S.pos;
 function hostState(patch) {
   const S = room.S || { idx: 0, playing: false, pos: 0, at: Date.now() };
   room.S = { ...S, pos: vpos(S), at: Date.now(), ...patch };
-  const msg = { t: 'st', S: room.S, list: room.list, members: room.members };
-  broadcast(msg);
+  broadcast(stMsg());
   roomApply(room.S);
+  rememberRoom();
   if (tab === 'room') softRoom();
 }
-function hostCmd(op, arg, from) {
+// 다음에 틀 수 있는 곡 (누구에게도 파일이 없는 곡은 건너뜀)
+function playableFrom(i, dir = 1) {
+  const n = room.list.length;
+  for (let k = 0; k < n; k++) { const j = ((i + dir * k) % n + n) % n, rid = room.list[j].rid; if (roomBlobs.has(rid) || roomRecv.has(rid)) return j; }
+  return -1;
+}
+function hostCmd(op, arg) {
   const n = room.list.length; if (!n) return;
   const S = room.S || { idx: 0, playing: false, pos: 0, at: Date.now() };
   const cur = vpos(S);
@@ -818,42 +857,48 @@ function hostCmd(op, arg, from) {
   else if (op === 'jump') hostState({ idx: Math.min(n - 1, Math.max(0, arg | 0)), pos: 0, playing: true });
   else if (op === 'next' || op === 'endnext') {
     if (op === 'endnext' && arg !== S.idx) return;           // 이미 넘어간 뒤면 무시
-    hostState({ idx: (S.idx + 1) % n, pos: 0, playing: true });
+    const j = playableFrom((S.idx + 1) % n);
+    hostState(j < 0 ? { playing: false, pos: 0 } : { idx: j, pos: 0, playing: true });
   }
-  else if (op === 'prev') hostState(cur > 3 ? { pos: 0 } : { idx: (S.idx - 1 + n) % n, pos: 0 });
+  else if (op === 'prev') { if (cur > 3) hostState({ pos: 0 }); else { const j = playableFrom((S.idx - 1 + n) % n, -1); hostState({ idx: j < 0 ? S.idx : j, pos: 0 }); } }
+  else if (op === 'rename') { room.name = String(arg || '').slice(0, 30) || room.name; hostState({}); }
 }
 function roomCtl(op, arg) {
   if (!room.on) return;
   if (room.host) hostCmd(op, arg);
-  else sendSafe(room.hostConn, { t: 'cmd', op, arg });
+  else if (room.hostConn) sendSafe(room.hostConn, { t: 'cmd', op, arg });
+  else toast('방에 다시 연결하는 중이에요');
+}
+function hostAddSongs(metas) {
+  for (const m of metas) if (!room.list.some(x => x.rid === m.rid)) room.list.push(m);
+  syncRoomSongs();
+  if (!room.S) room.S = { idx: 0, playing: false, pos: 0, at: Date.now() };
+  hostState({});
 }
 function hostOnData(c, d) {
   if (!d || !d.t) return;
   if (d.t === 'hello') {
     c._name = (d.name || '친구').slice(0, 20);
     room.members = room.members.filter(m => m.id !== c.peer).concat({ id: c.peer, name: c._name });
-    sendSafe(c, { t: 'st', S: room.S ? { ...room.S, pos: vpos(room.S), at: Date.now() } : null, list: room.list, members: room.members });
-    broadcast({ t: 'st', S: room.S ? { ...room.S, pos: vpos(room.S), at: Date.now() } : null, list: room.list, members: room.members }, c);
-    // 지금 곡부터 순서대로 파일 보내기
+    // 방장의 곡 목록이 비어 있으면 들어온 사람이 기억하는 목록을 이어받음
+    if (!room.list.length && Array.isArray(d.list) && d.list.length) { room.list = d.list; room.name = d.name2 || room.name; syncRoomSongs(); ensureMyBlobs(); }
+    sendSafe(c, stMsg()); broadcast(stMsg(), c);
     const order = room.list.map(m => m.rid), ci = room.S ? room.S.idx : 0;
     order.slice(ci).concat(order.slice(0, ci)).forEach(rid => enqueueFile(c, rid));
-    toast(`${c._name} 님이 들어왔어요`); if (tab === 'room') softRoom();
+    // 내게 없는 파일을 이 사람이 갖고 있으면 보내 달라고 요청
+    const need = (d.own || []).filter(rid => !roomBlobs.has(rid) && !roomRecv.has(rid) && room.list.some(m => m.rid === rid));
+    if (need.length) sendSafe(c, { t: 'need', rids: need });
+    toast(`${c._name} 님이 들어왔어요`); rememberRoom(); if (tab === 'room') softRoom();
   } else if (d.t === 'ping') sendSafe(c, { t: 'pong', t0: d.t0, h: Date.now() });
-  else if (d.t === 'cmd') hostCmd(d.op, d.arg, c);
-  else if (d.t === 'add') {
-    for (const m of d.songs || []) if (!room.list.some(x => x.rid === m.rid)) room.list.push({ ...m, owner: c.peer });
-    syncRoomSongs();
-    if (!room.S) room.S = { idx: 0, playing: false, pos: 0, at: Date.now() };
-    hostState({});
-  } else if (d.t === 'remove') {
-    const i = room.list.findIndex(x => x.rid === d.rid);
-    if (i >= 0) hostRemove(i);
-  } else onFileMsg(c, d);
+  else if (d.t === 'cmd') hostCmd(d.op, d.arg);
+  else if (d.t === 'add') hostAddSongs((d.songs || []).map(m => ({ ...m, owner: c.peer, ownerName: c._name })));
+  else if (d.t === 'remove') { const i = room.list.findIndex(x => x.rid === d.rid); if (i >= 0) hostRemove(i); }
+  else onFileMsg(c, d);
 }
 function hostRemove(i) {
   const S = room.S;
   room.list.splice(i, 1); syncRoomSongs();
-  if (!room.list.length) { audio.pause(); room.S = null; broadcast({ t: 'st', S: null, list: [], members: room.members }); if (tab === 'room') softRoom(); return; }
+  if (!room.list.length) { userPaused = true; audio.pause(); room.S = null; broadcast(stMsg()); rememberRoom(); if (tab === 'room') softRoom(); return; }
   if (S && i < S.idx) hostState({ idx: S.idx - 1 });
   else if (S && i === S.idx) hostState({ idx: S.idx % room.list.length, pos: 0 });
   else hostState({});
@@ -862,15 +907,18 @@ function hostRemove(i) {
 /* 참가자 */
 function guestOnData(d) {
   if (!d || !d.t) return;
-  if (d.t === 'bye') { room.leaving = true; toast('방장이 방을 닫았어요'); return leaveRoom(true); }
+  room.lastMsg = Date.now();
+  if (d.t === 'bye') return hostLost('방장이 나가서 다른 사람에게 방장을 넘기는 중…');
   if (d.t === 'st') {
-    room.list = d.list || []; room.members = d.members || []; syncRoomSongs();
-    room.S = d.S;
+    room.list = d.list || []; room.members = d.members || []; if (d.name) room.name = d.name; syncRoomSongs();
+    room.S = d.S; room.hostId = d.host || room.hostId;
     if (room.S) roomApply(room.S); else if (!audio.paused) { userPaused = true; audio.pause(); }
-    if (tab === 'room') softRoom();
+    rememberRoom(); if (tab === 'room') softRoom();
   } else if (d.t === 'pong') {
     const t1 = Date.now(), rtt = t1 - d.t0;
-    if (rtt < room.rtt * 1.5 || rtt < 150) { room.rtt = Math.min(room.rtt, rtt); room.offset = d.h - (d.t0 + t1) / 2; }
+    if (rtt <= room.rtt * 1.5 || rtt < 150) { room.rtt = Math.min(room.rtt, rtt); room.offset = d.h - (d.t0 + t1) / 2; }
+  } else if (d.t === 'need') {
+    (async () => { await ensureMyBlobs(); (d.rids || []).forEach(rid => { if (roomBlobs.has(rid)) { roomUp.add(rid); enqueueFile(room.hostConn, rid); } }); })();
   } else onFileMsg(room.hostConn, d);
 }
 function pingHost() { [0, 300, 700].forEach(t => setTimeout(() => sendSafe(room.hostConn, { t: 'ping', t0: Date.now() }), t)); }
@@ -901,7 +949,7 @@ async function roomApply(S) {
   pendingApply = null;
   const want = Math.max(0, vpos(S));
   if (audio.duration && want >= audio.duration - 0.3) { if (!audio.paused) { userPaused = true; audio.pause(); } return; }
-  if (Math.abs(audio.currentTime - want) > 0.35) { try { audio.currentTime = want; } catch {} }
+  if (Math.abs(audio.currentTime - want) > 0.4) { try { audio.currentTime = want; } catch {} }
   if (S.playing && audio.paused) {
     userPaused = false;
     if (ctx && ctx.state !== 'running') ctx.resume().catch(() => {});
@@ -910,115 +958,165 @@ async function roomApply(S) {
   try { navigator.mediaSession.playbackState = S.playing ? 'playing' : 'paused'; } catch {}
 }
 
-/* 방 만들기 · 들어가기 · 나가기 */
-async function startPeer(id) {
-  await loadPeerLib();
-  return new Promise((ok, no) => {
-    const p = id ? new Peer(id) : new Peer();
+/* 연결: 방 주소를 먼저 차지하면 방장, 이미 누가 있으면 그 사람에게 접속 */
+function startPeer(id) {
+  return loadPeerLib().then(() => new Promise((ok, no) => {
+    const p = id ? new Peer(id, PEER_OPTS) : new Peer(PEER_OPTS);
     let done = false;
-    p.on('open', pid => { done = true; ok(p); });
-    p.on('error', e => { if (!done) { done = true; try { p.destroy(); } catch {} no(e); } else roomPeerError(e); });
-    p.on('disconnected', () => { if (room.on && !room.leaving) setTimeout(() => { try { p.reconnect(); } catch {} }, 1500); });
+    p.on('open', () => { done = true; ok(p); });
+    p.on('error', e => { if (!done) { done = true; try { p.destroy(); } catch {} no(e); } else onPeerError(p, e); });
+    p.on('disconnected', () => { if (room.on && !room.leaving && room.peer === p && !p.destroyed) setTimeout(() => { try { if (!p.destroyed) p.reconnect(); } catch {} }, 1500); });
     setTimeout(() => { if (!done) { done = true; try { p.destroy(); } catch {} no(new Error('timeout')); } }, 15000);
-  });
+  }));
 }
-function roomPeerError(e) {}
+function onPeerError(p, e) {
+  if (p !== room.peer || !room.on) return;
+  // 방장이 잠깐 자리를 비운 사이 다른 사람이 방장을 이어받았으면 → 나는 참가자로 다시 접속
+  if (e && e.type === 'unavailable-id' && room.host) { dropPeer(); room.host = false; connectLoop(); }
+}
+function dropPeer() {
+  room.conns.forEach(c => { try { c.close(); } catch {} }); room.conns = [];
+  try { room.hostConn && room.hostConn.close(); } catch {} room.hostConn = null;
+  try { room.peer && room.peer.destroy(); } catch {} room.peer = null;
+}
+function setStatus(t) { room.status = t; if (tab === 'room') softRoom(); }
+async function connectLoop(fresh) {
+  const gen = ++room.gen;
+  room.connecting = true; dropPeer();
+  for (let attempt = 0; attempt < 8; attempt++) {
+    if (!room.on || room.gen !== gen) return;
+    setStatus(attempt ? `연결하는 중… (${attempt + 1}번째)` : '연결하는 중…');
+    // 1) 방 주소 차지 시도 → 성공하면 내가 방장
+    try {
+      const p = await startPeer(roomPeerId(room.code));
+      if (!room.on || room.gen !== gen) { try { p.destroy(); } catch {} return; }
+      becomeHost(p); return;
+    } catch (e) {
+      if (e && e.message === 'lib') { room.connecting = false; setStatus('offline'); toast('함께 듣기를 불러오지 못했어요. 인터넷 연결을 확인해 주세요'); return; }
+      if (e && e.type === 'browser-incompatible') { room.connecting = false; setStatus('offline'); toast('이 브라우저에서는 함께 듣기를 쓸 수 없어요'); return; }
+      if (!(e && e.type === 'unavailable-id')) { await sleep(1500); continue; }
+      if (fresh) { room.code = newCode(); continue; }      // 새 방인데 코드가 겹치면 다른 코드로
+    }
+    // 2) 이미 방장이 있음 → 접속
+    try { await becomeGuest(gen); return; }
+    catch (e) { if (room.gen !== gen) return; await sleep(1200 + attempt * 800); }
+  }
+  if (room.on && room.gen === gen) { room.connecting = false; setStatus('offline'); toast('방에 연결하지 못했어요. 잠시 뒤 다시 연결을 눌러 주세요'); }
+}
+function becomeHost(p) {
+  room.peer = p; room.host = true; room.myId = p.id; room.hostId = p.id; room.connecting = false; room.status = ''; room.conns = [];
+  if (room.S) room.S = { ...room.S, pos: vpos(room.S), at: Date.now() };   // 이전 방장의 시계 → 내 시계로
+  room.offset = 0;
+  room.members = [{ id: p.id, name: myNick() || '방장' }];
+  p.on('connection', c => {
+    c.on('open', () => { if (!room.conns.includes(c)) room.conns.push(c); });
+    c.on('data', d => hostOnData(c, d));
+    c.on('close', () => {
+      room.conns = room.conns.filter(x => x !== c);
+      room.members = room.members.filter(m => m.id !== c.peer);
+      if (c._name && room.on && room.host) { toast(`${c._name} 님이 나갔어요`); broadcast(stMsg()); }
+      if (tab === 'room') softRoom();
+    });
+  });
+  ensureMyBlobs().then(() => { if (room.S) hostState({}); else { rememberRoom(); softRoom(); } });
+}
+async function becomeGuest(gen) {
+  const p = await startPeer();
+  if (!room.on || room.gen !== gen) { try { p.destroy(); } catch {} throw new Error('stale'); }
+  const c = p.connect(roomPeerId(room.code), { reliable: true });
+  try {
+    await new Promise((ok, no) => {
+      const t = setTimeout(() => no(new Error('timeout')), 20000);
+      c.on('open', () => { clearTimeout(t); ok(); });
+      c.on('error', e => { clearTimeout(t); no(e); });
+      p.on('error', e => { clearTimeout(t); no(e); });
+    });
+  } catch (e) { try { p.destroy(); } catch {} throw e; }
+  if (!room.on || room.gen !== gen) { try { p.destroy(); } catch {} throw new Error('stale'); }
+  Object.assign(room, { peer: p, host: false, hostConn: c, conns: [], offset: 0, rtt: 1e9, myId: p.id, connecting: false, status: '', lastMsg: Date.now() });
+  c.on('data', guestOnData);
+  c.on('close', () => { if (room.hostConn === c) hostLost('방장과 연결이 끊겨 다시 연결하는 중…'); });
+  await ensureMyBlobs();
+  sendSafe(c, { t: 'hello', name: myNick() || '친구', own: [...roomBlobs.keys()], list: room.list, name2: room.name });
+  pingHost(); clearInterval(roomPing); roomPing = setInterval(pingHost, 15000);
+  softRoom();
+}
+function hostLost(msg) {
+  if (!room.on || room.leaving) return;
+  room.hostConn = null; toast(msg);
+  // 여러 명이 동시에 방장이 되려고 하지 않도록 조금씩 다른 시간에 시도
+  setTimeout(() => { if (room.on && !room.hostConn && !room.host) connectLoop(); }, 300 + Math.random() * 1500);
+}
+
+/* 방 열기 · 나가기 */
 function roomBegin() {
   room.on = true; room.leaving = false; tab = 'room';
+  document.querySelectorAll('.tab').forEach(x => x.classList.toggle('on', x.dataset.tab === 'room'));
   userPaused = true; audio.pause();
   clearInterval(roomTick);
   roomTick = setInterval(() => {
-    if (!room.on || !room.S) return;
-    if (room.host) {
+    if (!room.on) return;
+    room.ticks++;
+    if (room.host && room.S) {
       const s = roomSongs[room.S.idx];
-      // 곡 길이가 지나면 다음 곡으로 (방장에게 파일이 아직 없어도)
       const dur = (s && curId === s.id && audio.duration) || (s && s.dur) || 0;
-      if (room.S.playing && dur && vpos(room.S) > dur + 0.3) hostCmd('endnext', room.S.idx);
-      if (Date.now() % 4000 < 1000) broadcast({ t: 'st', S: { ...room.S, pos: vpos(room.S), at: Date.now() }, list: room.list, members: room.members });
-    } else if (room.S.playing && !pendingApply) roomApply(room.S);   // 어긋나면 맞춤
+      if (room.S.playing && dur && vpos(room.S) > dur + 0.3) hostCmd('endnext', room.S.idx);   // 곡이 끝나면 다음 곡
+      if (room.ticks % 3 === 0) broadcast(stMsg());
+    } else if (!room.host && room.hostConn) {
+      if (room.S && room.S.playing && !pendingApply) roomApply(room.S);   // 어긋나면 맞춤
+      // 방장에게서 한참 소식이 없으면(방장 앱이 꺼짐 등) 다시 연결
+      if (!document.hidden && Date.now() - room.lastMsg > 15000) { try { room.hostConn.close(); } catch {} hostLost('방장과 연결이 끊겨 다시 연결하는 중…'); }
+    }
   }, 1000);
   render();
 }
-async function createRoom() {
+async function openRoom(code, opts = {}) {
+  code = normCode(code);
+  if (!opts.fresh && code.length !== 6) return toast('6자리 방 코드를 넣어 주세요');
+  if (room.on) { if (room.code === code) return; await leaveRoom(true); }
   unlockAudio();
-  toast('방을 만드는 중…');
-  for (let i = 0; i < 4; i++) {
-    const code = newCode();
-    try {
-      const p = await startPeer(roomPeerId(code));
-      Object.assign(room, { peer: p, host: true, code, conns: [], list: [], S: null, offset: 0, myId: p.id });
-      room.members = [{ id: p.id, name: myNick() || '방장' }];
-      p.on('connection', c => {
-        c.on('open', () => { room.conns.push(c); });
-        c.on('data', d => hostOnData(c, d));
-        c.on('close', () => {
-          room.conns = room.conns.filter(x => x !== c);
-          room.members = room.members.filter(m => m.id !== c.peer);
-          if (c._name && room.on) toast(`${c._name} 님이 나갔어요`);
-          if (room.on) broadcast({ t: 'st', S: room.S, list: room.list, members: room.members });
-          if (tab === 'room') softRoom();
-        });
-      });
-      roomSongs = []; roomBlobs.clear();
-      roomBegin(); toast(`방을 만들었어요. 코드 ${code}`);
-      return;
-    } catch (e) { if (!(e && e.type === 'unavailable-id')) { toast(roomErrText(e)); return; } }
-  }
-  toast('방을 만들지 못했어요. 다시 해 주세요');
+  const saved = myRooms.find(r => r.code === code);
+  Object.assign(room, { code, name: opts.name || (saved && saved.name) || '함께 듣기 방', list: saved ? (saved.list || []).slice() : [], S: null, members: [], host: false });
+  roomMine = saved ? { ...(saved.mine || {}) } : {};
+  roomBlobs.clear(); roomRecv.clear(); roomUp.clear(); roomSongs = []; syncRoomSongs();
+  roomBegin();
+  await connectLoop(!!opts.fresh);
+  if (room.on && !room.connecting && room.status !== 'offline') toast(room.host ? `'${room.name}' 방을 열었어요 · 코드 ${room.code}` : `'${room.name}' 방에 들어왔어요`);
 }
-const roomErrText = e => e && e.message === 'lib' ? '함께 듣기를 불러오지 못했어요. 인터넷 연결을 확인해 주세요'
-  : e && e.type === 'peer-unavailable' ? '방을 찾을 수 없어요. 코드를 확인해 주세요'
-  : e && (e.type === 'browser-incompatible') ? '이 브라우저에서는 함께 듣기를 쓸 수 없어요'
-  : '연결하지 못했어요. 인터넷 연결을 확인하고 다시 해 주세요';
-async function joinRoom(code, isRetry) {
-  code = (code || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
-  if (code.length !== 6) return toast('6자리 방 코드를 넣어 주세요');
-  if (!isRetry) { unlockAudio(); toast('방에 들어가는 중…'); }
-  try {
-    const p = room.peer && !room.peer.destroyed && !room.host ? room.peer : await startPeer();
-    const c = p.connect(roomPeerId(code), { reliable: true });
-    await new Promise((ok, no) => {
-      const t = setTimeout(() => no({ type: 'peer-unavailable' }), 12000);
-      c.on('open', () => { clearTimeout(t); ok(); });
-      p.once ? p.once('error', e => { clearTimeout(t); no(e); }) : p.on('error', e => { clearTimeout(t); no(e); });
-    });
-    Object.assign(room, { peer: p, host: false, code, hostConn: c, conns: [], offset: 0, rtt: 1e9, myId: p.id, retries: 0 });
-    if (!isRetry) { roomSongs = []; roomBlobs.clear(); room.list = []; room.S = null; }
-    c.on('data', guestOnData);
-    c.on('close', () => {
-      if (!room.on || room.leaving) return;
-      // 잠깐 끊긴 거면 다시 연결, 안 되면 방에서 나감
-      if (room.retries++ < 3) { toast('연결이 끊겨 다시 연결하는 중…'); setTimeout(() => joinRoom(room.code, true), 2000); }
-      else { toast('방장과 연결이 끊겼어요'); leaveRoom(true); }
-    });
-    sendSafe(c, { t: 'hello', name: myNick() || '친구' });
-    pingHost(); clearInterval(roomPing); roomPing = setInterval(pingHost, 15000);
-    if (!isRetry) { roomBegin(); toast('방에 들어왔어요'); }
-  } catch (e) {
-    if (isRetry && room.on && room.retries < 3) { room.retries++; return setTimeout(() => joinRoom(room.code, true), 3000); }
-    if (isRetry) { toast('방장과 연결이 끊겼어요'); return leaveRoom(true); }
-    toast(roomErrText(e));
-  }
+async function createRoom() {
+  const name = await askText('새 방 이름', `${myNick() || '우리'}의 방`, '만들기');
+  if (!name) return;
+  openRoom(newCode(), { fresh: true, name });
 }
 async function leaveRoom(silent) {
   if (!room.on) return;
-  room.leaving = true; room.on = false;
-  if (room.host) { broadcast({ t: 'bye' }); await new Promise(r => setTimeout(r, 200)); }
+  room.leaving = true; room.gen++;
+  rememberRoom();
+  if (room.host && room.conns.length) { broadcast({ t: 'bye' }); await sleep(200); }
+  room.on = false;
   clearInterval(roomTick); clearInterval(roomPing);
-  try { room.hostConn && room.hostConn.close(); } catch {}
-  try { room.peer && room.peer.destroy(); } catch {}
-  Object.assign(room, { host: false, code: '', peer: null, hostConn: null, conns: [], members: [], list: [], S: null });
-  roomSongs = []; roomBlobs.clear(); roomRecv.clear(); pendingApply = null;
+  dropPeer();
+  Object.assign(room, { host: false, code: '', name: '', members: [], list: [], S: null, connecting: false, status: '' });
+  roomSongs = []; roomBlobs.clear(); roomRecv.clear(); roomUp.clear(); pendingApply = null; roomMine = {};
   userPaused = true; audio.pause();
   if (curUrl) { URL.revokeObjectURL(curUrl); curUrl = null; }
   curId = null; queue = []; order = []; pos = -1; audio.removeAttribute('src'); try { audio.load(); } catch {}
   try { await restoreState(); } catch {}
+  tab = 'room'; document.querySelectorAll('.tab').forEach(x => x.classList.toggle('on', x.dataset.tab === 'room'));
   updateNow(); setPlayIcon(); render();
   if (!silent) toast('방에서 나왔어요');
 }
+// 방장 앱이 다시 화면에 나오면 연결 상태를 확인
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden || !room.on || room.connecting) return;
+  const p = room.peer;
+  if (!p || p.destroyed) connectLoop();
+  else if (p.disconnected) { try { p.reconnect(); } catch { connectLoop(); } }
+  else if (!room.host && (!room.hostConn || room.hostConn.open === false)) connectLoop();
+});
 function inviteRoom() {
   const url = `${location.origin}${location.pathname}?room=${room.code}`;
-  const text = `같이 노래 들어요! 방 코드: ${room.code}`;
+  const text = `'${room.name}' 방에서 같이 노래 들어요! 방 코드: ${room.code}`;
   if (navigator.share) navigator.share({ title: '함께 듣기', text, url }).catch(() => {});
   else navigator.clipboard.writeText(`${text}\n${url}`).then(() => toast('초대 링크를 복사했어요')).catch(() => toast(`방 코드: ${room.code}`));
 }
@@ -1037,30 +1135,29 @@ function addSongsToRoom() {
         const s = songById(id);
         let blob; try { blob = await getBlob(s); } catch { continue; }
         const rid = uid();
-        roomBlobs.set(rid, blob);
-        metas.push({ rid, name: s.name, artist: s.artist || '', dur: s.dur || 0, size: blob.size, thumb: (s.thumb && s.thumb.startsWith('data:') && s.thumb.length < 120000) ? s.thumb : '', owner: room.myId });
+        roomBlobs.set(rid, blob); roomMine[rid] = s.id;
+        metas.push({ rid, name: s.name, artist: s.artist || '', dur: s.dur || 0, size: blob.size, thumb: (s.thumb && s.thumb.startsWith('data:') && s.thumb.length < 120000) ? s.thumb : '', owner: room.myId, ownerName: myNick() || '' });
       }
       if (!metas.length) return;
       if (room.host) {
-        room.list.push(...metas); syncRoomSongs();
-        if (!room.S) room.S = { idx: room.list.length - metas.length, playing: false, pos: 0, at: Date.now() };
-        hostState({});
+        const firstNew = room.list.length;
+        hostAddSongs(metas);
+        if (room.S && !room.S.playing && room.list.length === metas.length) room.S.idx = firstNew;
         room.conns.forEach(c => metas.forEach(m => enqueueFile(c, m.rid)));
-      } else {
+      } else if (room.hostConn) {
         sendSafe(room.hostConn, { t: 'add', songs: metas });
         metas.forEach(m => { roomUp.add(m.rid); enqueueFile(room.hostConn, m.rid); });
-      }
+      } else return toast('방에 다시 연결된 뒤에 추가해 주세요');
+      rememberRoom();
       toast(`${metas.length}곡을 방에 추가했어요`);
     };
   });
 }
 function roomStatus(m) {
-  if (roomBlobs.has(m.rid)) {
-    if (roomUp.has(m.rid)) return `보내는 중 ${Math.round((upPct.get(m.rid) || 0) * 100)}%`;
-    return '';
-  }
+  if (roomBlobs.has(m.rid)) return roomUp.has(m.rid) ? `보내는 중 ${Math.round((upPct.get(m.rid) || 0) * 100)}%` : '';
   const r = roomRecv.get(m.rid);
-  return r ? `받는 중 ${Math.round(r.got / r.size * 100)}%` : '받기 대기 중';
+  if (r) return `받는 중 ${Math.round(r.got / r.size * 100)}%`;
+  return room.host ? '파일 없음 · 넣은 사람이 들어오면 받아요' : '받기 대기 중';
 }
 let softRoomT = 0;
 function softRoom() { if (softRoomT) return; softRoomT = setTimeout(() => { softRoomT = 0; if (tab === 'room') render(); }, 250); }
@@ -1069,37 +1166,54 @@ function renderRoom(m) {
     const pre = (launchRoom || '').toUpperCase();
     m.innerHTML = `<div class="room-box">
       <p class="room-h">친구와 같은 곡을 동시에 들어요</p>
-      <p class="room-p">방을 만들고 초대하면, 서로의 곡을 한 플레이리스트에 넣고 같은 곡·같은 위치로 함께 들을 수 있어요. 누구든 재생·정지·넘기기를 하면 모두에게 똑같이 적용돼요.</p>
+      <p class="room-p">방을 만들고 초대하면 서로의 곡을 한 플레이리스트에 넣고 같은 곡·같은 위치로 함께 들어요. 누구든 재생·정지·넘기기를 하면 모두에게 똑같이 적용돼요.</p>
       <label class="room-l">내 이름</label><input class="field" id="rNick" maxlength="20" placeholder="예: 민지" value="${esc(myNick())}">
-      <button class="btn primary room-big" id="rCreate">${I_ADD} 방 만들기</button>
-      <div class="room-or">또는</div>
+      <button class="btn primary room-big" id="rCreate">${I_ADD} 새 방 만들기</button>
+      ${myRooms.length ? `<p class="room-l" style="margin-top:18px">내 방</p><div id="myRooms">${myRooms.map(r => `
+        <div class="row" data-open="${r.code}"><div class="thumb">${NOTE_ICO}</div>
+          <div class="info"><div class="name">${esc(r.name || '함께 듣기 방')}</div><div class="sub">코드 ${r.code} · ${(r.list || []).length}곡</div></div>
+          <button class="ic" data-forget="${r.code}" aria-label="목록에서 지우기">✕</button></div>`).join('')}</div>` : ''}
+      <div class="room-or">코드로 들어가기</div>
       <div class="room-join"><input class="field" id="rCode" maxlength="6" placeholder="방 코드 6자리" value="${esc(pre)}" autocapitalize="characters" autocomplete="off"><button class="btn" id="rJoin">들어가기</button></div>
-      <p class="room-note">곡 파일은 서버에 저장되지 않고, 방에 있는 기기끼리 직접 전송돼요. 저작권이 있는 음악은 친구끼리 개인적으로만 들어 주세요.</p>
+      <p class="room-note">곡 파일은 서버에 저장되지 않고, 방에 있는 기기끼리 직접 전송돼요. 방에 아무도 없으면 방에 먼저 들어간 사람이 방장이 돼요. 저작권이 있는 음악은 친구끼리 개인적으로만 들어 주세요.</p>
     </div>`;
     const saveNick = () => LS.set('nick', $('#rNick').value.trim());
     $('#rNick').onchange = saveNick;
-    $('#rCreate').onclick = () => { saveNick(); createRoom(); };
-    $('#rJoin').onclick = () => { saveNick(); joinRoom($('#rCode').value); };
+    $('#rCreate').onclick = () => { saveNick(); unlockAudio(); createRoom(); };
+    $('#rJoin').onclick = () => { saveNick(); openRoom($('#rCode').value); };
     $('#rCode').onkeydown = e => { if (e.key === 'Enter') $('#rJoin').click(); };
+    m.querySelectorAll('[data-open]').forEach(r => r.onclick = e => {
+      const f = e.target.closest('[data-forget]');
+      if (f) { myRooms = myRooms.filter(x => x.code !== f.dataset.forget); saveRooms(); render(); toast('목록에서 지웠어요'); return; }
+      saveNick(); openRoom(r.dataset.open);
+    });
     return;
   }
   const S = room.S, cur = S ? S.idx : -1;
-  m.innerHTML = `<div class="room-top">
-      <div><div class="room-code">방 코드 <b>${room.code}</b>${room.host ? ' <span class="room-tag">방장</span>' : ''}</div>
-      <div class="room-mem">${room.members.map(x => `<span>${esc(x.name)}${x.id === room.myId ? ' (나)' : ''}</span>`).join('')}</div></div>
-    </div>
+  const hostName = (room.members.find(x => x.id === room.hostId) || {}).name;
+  const status = room.status === 'offline'
+    ? `<div class="room-status off">연결이 끊겼어요 <button class="btn" id="rRetry">다시 연결</button></div>`
+    : room.connecting || room.status ? `<div class="room-status">${esc(room.status || '연결하는 중…')}</div>` : '';
+  m.innerHTML = `<div class="room-top"><div style="min-width:0">
+      <div class="room-name">${esc(room.name)} <button class="ic" id="rRename" aria-label="방 이름 바꾸기">${I_EDIT}</button></div>
+      <div class="room-code">방 코드 <b>${room.code}</b>${room.host ? ' <span class="room-tag">내가 방장</span>' : ''}</div>
+      <div class="room-mem">${room.members.map(x => `<span>${esc(x.name)}${x.id === room.myId ? ' (나)' : ''}${x.id === room.hostId ? ' · 방장' : ''}</span>`).join('')}</div>
+    </div></div>${status}
     <div class="toolbar"><button class="btn primary" id="rAdd">${I_ADD} 내 곡 추가</button><button class="btn" id="rInv">초대하기</button><button class="btn" id="rLeave">나가기</button></div>` +
     (room.list.length ? `<div id="songList">${room.list.map((x, i) => {
       const s = roomSongs[i], st = roomStatus(x), u = s && s.thumb;
       return `<div class="row${i === cur ? ' cur' : ''}" data-ri="${i}">
         <div class="thumb">${i === cur && S && S.playing ? eqHTML : u ? `<img src="${u}" alt="">` : NOTE_ICO}</div>
         <div class="info"><div class="name">${esc(x.name)}</div><div class="sub">${[x.artist, ownerName(x), st].filter(Boolean).map(esc).join(' · ')}</div></div>
-        ${room.host || x.owner === room.myId ? `<button class="ic" data-rdel="${x.rid}" aria-label="빼기">✕</button>` : ''}
+        ${room.host || x.owner === room.myId || roomMine[x.rid] ? `<button class="ic" data-rdel="${x.rid}" aria-label="빼기">✕</button>` : ''}
       </div>`;
     }).join('')}</div>` : `<div class="empty">아직 곡이 없어요.<br><b>내 곡 추가</b>로 함께 들을 곡을 넣어 보세요.</div>`);
+  void hostName;
   $('#rAdd').onclick = addSongsToRoom;
   $('#rInv').onclick = inviteRoom;
   $('#rLeave').onclick = () => leaveRoom();
+  if ($('#rRetry')) $('#rRetry').onclick = () => connectLoop();
+  $('#rRename').onclick = async () => { const v = await askText('방 이름', room.name, '바꾸기'); if (v) roomCtl('rename', v); };
   m.querySelectorAll('[data-ri]').forEach(r => r.onclick = e => {
     const del = e.target.closest('[data-rdel]');
     if (del) {
@@ -3134,7 +3248,7 @@ function runLaunchAction() {
   resumeMelody(5000);
   renderAccount();
   upgradeOldSongs();
-  setPlayIcon(); updateModes(); render();
+  setPlayIcon(); updateModes(); await loadRooms(); render();
   runLaunchAction();
 })();
 })();
