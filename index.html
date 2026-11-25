@@ -277,7 +277,7 @@ input[type=range]::-moz-range-thumb{width:16px;height:16px;border-radius:50%;bac
 <div id="drop">여기에 MP3를 놓으세요</div>
 
 <script>
-window.APP_VERSION = '20261122134535';   // 배포할 때 자동으로 바뀜 (bump-version.sh)
+window.APP_VERSION = '20261125145653';   // 배포할 때 자동으로 바뀜 (bump-version.sh)
 // Firebase 설정 (웹에 공개돼도 괜찮은 값이에요. 보안은 Firebase 콘솔의 규칙과 승인된 도메인으로 지켜요.)
 window.FIREBASE_CONFIG = {
   apiKey: "AIzaSyClt5JQwO1zA6C4uygTcCrnSG0dDHYQl1I",
@@ -1266,11 +1266,15 @@ function render() {
         ${list.length ? `<button class="btn" id="playAll">▶ 전체 재생</button><button class="btn" id="shufAll">${SHUF} 셔플 재생</button>` : ''}
       </div>` + (songs.length ? `<input class="field search" id="q" type="search" placeholder="곡 · 가수 · 앨범 검색" value="${esc(libQuery)}" autocomplete="off">` + (list.length ? `<div id="songList">${list.map((s, i) => songRow(s, i, 'lib')).join('')}</div>` : '<div class="empty">검색 결과가 없어요.</div>')
       : `<div class="empty">아직 저장된 곡이 없어요.<br><b>＋ MP3 추가</b>로 MP3 파일을 불러오거나,<br><b>영상에서 추가</b>로 영상의 소리만 뽑아 넣으세요.</div>`)
-      + `<div class="ver">버전 ${verLabel()} · <button id="verBtn">최신 버전 받기</button></div>`;
+      + `<div class="ver"><button id="mfBtn">음악 우선 모드: ${LS.get('musicFirst', false) ? '켜짐' : '꺼짐'}</button><br>버전 ${verLabel()} · <button id="verBtn">최신 버전 받기</button></div>`;
     $('#addBtn').onclick = () => $('#fileIn').click();
     $('#vidBtn').onclick = () => $('#videoIn').click();
     if ($('#relinkAll')) $('#relinkAll').onclick = relinkMany;
     $('#verBtn').onclick = forceRefresh;
+    $('#mfBtn').onclick = () => {
+      const on = !LS.get('musicFirst', false); LS.set('musicFirst', on); render();
+      toast(on ? '음악 우선 모드를 켰어요. 다른 앱 소리 때문에 멈춰도 잠시 뒤 다시 틀어요' : '음악 우선 모드를 껐어요');
+    };
     if ($('#q')) $('#q').oninput = e => { libQuery = e.target.value; render(); };
     if (list.length) {
       $('#playAll').onclick = () => { setShuffle(false); playList(list.map(s => s.id), 0, 'lib'); };
@@ -3029,7 +3033,22 @@ audio.addEventListener('pause', () => {
   if (AS && AS.state) { if (AS.state !== 'interrupted') retryResume([600, 2000, 5000]); }
   // 갤럭시 등: 다른 소리 때문인지 알 수 없으므로, 앱을 막 나간 순간에 멈춘 경우만 앱 전환 때문으로 보고 다시 재생
   else if (document.hidden && Date.now() - hiddenAt < 2500) retryResume([300, 1200, 2500]);
+  if (LS.get('musicFirst', false)) startMusicFirst();
 });
+// 음악 우선 모드: 다른 앱 소리 때문에 멈춰도 잠시 뒤부터 계속 다시 틀어 봄
+// (휴대폰은 다른 앱이 소리를 껐는지 알려 주지 않아서, 직접 다시 시도하는 방법뿐임)
+let mfTimer = null, mfStart = 0;
+function startMusicFirst() {
+  clearTimeout(mfTimer); mfStart = Date.now();
+  const step = n => {
+    mfTimer = setTimeout(() => {
+      if (!bgInterrupted || userPaused || !curId || !audio.paused || Date.now() - mfStart > 10 * 60e3) return;
+      if (!otherAudio()) audio.play().catch(() => {});
+      step(n + 1);
+    }, [3000, 8000][n] || 15000);
+  };
+  step(0);
+}
 // 다른 영상이 끝나서 소리를 돌려받으면 이어서 재생
 try { if (AS && 'onstatechange' in AS) AS.addEventListener('statechange', () => { if (AS.state !== 'interrupted') setTimeout(resumeIfInterrupted, 500); }); } catch {}
 // 이 앱으로 돌아오면 이어서 재생
